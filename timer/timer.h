@@ -25,8 +25,17 @@ public:
     // Add a timer that expires after the specified duration
     uint64_t addTimer(const Duration& duration, Callback callback);
 
+    // Add a repeating timer that fires repeatedly at the specified interval
+    uint64_t addRepeatingTimer(const Duration& interval, Callback callback);
+
     // Add a timer that expires after the specified duration in seconds
     uint64_t addTimer(const std::chrono::seconds& duration, Callback callback);
+
+    // Add a repeating timer that fires repeatedly at the specified interval in seconds
+    uint64_t addRepeatingTimer(const std::chrono::seconds& interval, Callback callback);
+
+    // Remove a specific timer by ID (useful for stopping repeating timers)
+    bool removeTimer(uint64_t timer_id);
 
     // Check for expired timers and trigger them
     void update();
