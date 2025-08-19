@@ -33,7 +33,7 @@ public:
     Config mConfig;
     bool mDetected = false;
     std::vector<short> mBuffer;
-    size_t mFramesProcessed = 0;
+    size_t mTotalFramesProcessed = 0;
 
     explicit Impl(const std::string& modelFilePath) : mConfig(modelFilePath) {}
 
@@ -64,28 +64,31 @@ public:
         bool firstStageDetected = false;
         bool secondStageDetected = false;
 
-        // First processor: sliding window after configured frames
-        if (mFramesProcessed >= mConfig.firstProcessorStartFrames) {
-            size_t currentFrameStart = (mFramesProcessed - 1) * mConfig.frameSize;
-            if (currentFrameStart + mConfig.frameSize <= mBuffer.size()) {
-                std::vector<short> currentFrame(
-                    mBuffer.begin() + currentFrameStart,
-                    mBuffer.begin() + currentFrameStart + mConfig.frameSize
-                );
-                firstStageDetected = processFirstStage(currentFrame);
-            }
+        // Calculate how many complete frames we have in the buffer
+        size_t framesInBuffer = mBuffer.size() / mConfig.frameSize;
+
+        // First processor: process the most recent complete frame after we have enough frames
+        if (mTotalFramesProcessed >= mConfig.firstProcessorStartFrames && framesInBuffer > 0) {
+            // Process the most recent complete frame
+            size_t lastFrameStart = (framesInBuffer - 1) * mConfig.frameSize;
+            std::vector<short> currentFrame(
+                mBuffer.begin() + lastFrameStart,
+                mBuffer.begin() + lastFrameStart + mConfig.frameSize
+            );
+            firstStageDetected = processFirstStage(currentFrame);
         }
 
         // Second processor: process last N frames when available
-        if (mFramesProcessed >= mConfig.secondProcessorFrames) {
+        if (mTotalFramesProcessed >= mConfig.secondProcessorFrames && framesInBuffer >= mConfig.secondProcessorFrames) {
+            // Only use complete frames - calculate the end position of the last complete frame
+            size_t completeFramesSize = framesInBuffer * mConfig.frameSize;
             size_t secondStageSize = mConfig.secondProcessorFrames * mConfig.frameSize;
-            if (mBuffer.size() >= secondStageSize) {
-                std::vector<short> lastFrames(
-                    mBuffer.end() - secondStageSize,
-                    mBuffer.end()
-                );
-                secondStageDetected = processSecondStage(lastFrames);
-            }
+
+            std::vector<short> lastFrames(
+                mBuffer.begin() + (completeFramesSize - secondStageSize),
+                mBuffer.begin() + completeFramesSize
+            );
+            secondStageDetected = processSecondStage(lastFrames);
         }
 
         mDetected = firstStageDetected || secondStageDetected;
@@ -103,7 +106,7 @@ public:
 
         // Process complete frames
         while (mBuffer.size() >= mConfig.frameSize) {
-            mFramesProcessed++;
+            mTotalFramesProcessed++;
             detected = processAudioFrames() || detected;
 
             // Remove the oldest frame for sliding window, but keep enough for second processor
