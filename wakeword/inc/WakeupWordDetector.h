@@ -13,7 +13,10 @@ public:
 
     // Buffers input until at least a minimum chunk size, then processes
     bool processAudioBuffer(const std::vector<short>& buffer);
-    bool isWakeupWordDetected() const;
+        bool isWakeupWordDetected() const;
+
+    // Reset the detector's internal state
+    void reset();
 
 private:
     class Impl;

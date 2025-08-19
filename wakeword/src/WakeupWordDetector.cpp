@@ -99,6 +99,13 @@ public:
         return mDetected;
     }
 
+    // Reset the detector's internal state
+    void reset() {
+        mDetected = false;
+        mBuffer.clear();
+        mTotalFramesProcessed = 0;
+    }
+
     // Main processing method moved from WakeupWordDetector
     bool processAudioBuffer(const std::vector<short>& buffer) {
         mBuffer.insert(mBuffer.end(), buffer.begin(), buffer.end());
@@ -135,6 +142,10 @@ bool WakeupWordDetector::processAudioBuffer(const std::vector<short>& buffer) {
 
 bool WakeupWordDetector::isWakeupWordDetected() const {
     return mImpl->isWakeupWordDetected();
+}
+
+void WakeupWordDetector::reset() {
+    mImpl->reset();
 }
 
 } // namespace wakeword
