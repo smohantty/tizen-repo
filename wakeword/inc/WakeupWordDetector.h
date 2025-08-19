@@ -1,12 +1,14 @@
 #pragma once
 #include <memory>
 #include <vector>
+#include <string>
 
 namespace wakeword {
 
 class WakeupWordDetector {
 public:
-    WakeupWordDetector();
+    // Constructor with model file path and optional parameters
+    explicit WakeupWordDetector(const std::string& modelFilePath);
     ~WakeupWordDetector();
 
     // Buffers input until at least a minimum chunk size, then processes
