@@ -10,21 +10,48 @@
 
 namespace perf {
 
-struct PerformanceMetrics {
+// Simple data structure for returning performance metrics values
+struct PerformanceMetricsData {
     double mMinDurationMs = std::numeric_limits<double>::max();
     double mMaxDurationMs = 0.0;
     double mTotalDurationMs = 0.0;
     double mAvgDurationMs = 0.0;
-    std::atomic<size_t> mCallCount{0};
-    mutable std::mutex mMutex; // For coordinated updates
+    size_t mCallCount = 0;
+};
 
+class PerformanceMetrics {
+public:
+    // Constructor and Destructor
+    PerformanceMetrics();
+    ~PerformanceMetrics();
+
+    // Non-copyable and non-movable
+    PerformanceMetrics(const PerformanceMetrics&) = delete;
+    PerformanceMetrics& operator=(const PerformanceMetrics&) = delete;
+    PerformanceMetrics(PerformanceMetrics&&) = delete;
+    PerformanceMetrics& operator=(PerformanceMetrics&&) = delete;
+
+    // Public interface
     void update(double durationMs);
     void reset();
 
-    // Copy constructor and assignment operator
-    PerformanceMetrics() = default;
-    PerformanceMetrics(const PerformanceMetrics& other);
-    PerformanceMetrics& operator=(const PerformanceMetrics& other);
+    // Getters for accessing data
+    double getMinDurationMs() const;
+    double getMaxDurationMs() const;
+    double getTotalDurationMs() const;
+    double getAvgDurationMs() const;
+    size_t getCallCount() const;
+
+    // Methods for group aggregation (internal use)
+    void addToGroup(size_t callCount, double totalDuration, double minDuration, double maxDuration);
+
+    // Method to get data as a copyable struct
+    PerformanceMetricsData getData() const;
+
+private:
+    // PIMPL idiom - hide implementation details
+    class Impl;
+    Impl* mImpl;
 };
 
 class PerfMonitor {
@@ -71,8 +98,8 @@ public:
     };
 
     // Data retrieval
-    PerformanceMetrics getMetrics(const std::string& functionName) const;
-    std::vector<std::pair<std::string, PerformanceMetrics>> getAllMetrics() const;
+    PerformanceMetricsData getMetrics(const std::string& functionName) const;
+    std::vector<std::pair<std::string, PerformanceMetricsData>> getAllMetrics() const;
 
     // Simple reporting
     std::string generateReport() const;
@@ -84,7 +111,7 @@ public:
 
     // Function grouping
     void addFunctionToGroup(const std::string& groupName, const std::string& functionName);
-    PerformanceMetrics getGroupMetrics(const std::string& groupName) const;
+    PerformanceMetricsData getGroupMetrics(const std::string& groupName) const;
 
     // Reset functionality
     void reset();
