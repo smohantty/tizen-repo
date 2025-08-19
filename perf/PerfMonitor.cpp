@@ -28,7 +28,7 @@ public:
     double mMaxDurationMs = 0.0;
     double mTotalDurationMs = 0.0;
     double mAvgDurationMs = 0.0;
-    std::atomic<size_t> mCallCount{0};
+    size_t mCallCount = 0;
     mutable std::mutex mMutex; // For coordinated updates
 };
 
@@ -43,7 +43,7 @@ PerformanceMetrics::~PerformanceMetrics() {
 void PerformanceMetrics::update(double durationMs) {
     std::lock_guard<std::mutex> lock(mImpl->mMutex);
 
-    size_t currentCount = mImpl->mCallCount.load();
+    size_t currentCount = mImpl->mCallCount;
     if (currentCount == 0) {
         mImpl->mMinDurationMs = durationMs;
         mImpl->mMaxDurationMs = durationMs;
@@ -54,7 +54,8 @@ void PerformanceMetrics::update(double durationMs) {
 
     // Update total and count
     mImpl->mTotalDurationMs += durationMs;
-    size_t newCount = mImpl->mCallCount.fetch_add(1) + 1;
+    mImpl->mCallCount++;
+    size_t newCount = mImpl->mCallCount;
 
     // Update average
     mImpl->mAvgDurationMs = mImpl->mTotalDurationMs / newCount;
@@ -66,7 +67,7 @@ void PerformanceMetrics::reset() {
     mImpl->mMaxDurationMs = 0.0;
     mImpl->mTotalDurationMs = 0.0;
     mImpl->mAvgDurationMs = 0.0;
-    mImpl->mCallCount.store(0);
+    mImpl->mCallCount = 0;
 }
 
 double PerformanceMetrics::getMinDurationMs() const {
@@ -90,16 +91,17 @@ double PerformanceMetrics::getAvgDurationMs() const {
 }
 
 size_t PerformanceMetrics::getCallCount() const {
-    return mImpl->mCallCount.load();
+    std::lock_guard<std::mutex> lock(mImpl->mMutex);
+    return mImpl->mCallCount;
 }
 
 void PerformanceMetrics::addToGroup(size_t callCount, double totalDuration, double minDuration, double maxDuration) {
     std::lock_guard<std::mutex> lock(mImpl->mMutex);
 
-    size_t currentCount = mImpl->mCallCount.load();
+        size_t currentCount = mImpl->mCallCount;
     size_t newCount = currentCount + callCount;
 
-    mImpl->mCallCount.store(newCount);
+    mImpl->mCallCount = newCount;
     mImpl->mTotalDurationMs += totalDuration;
 
     if (currentCount == 0) {
@@ -122,7 +124,7 @@ PerformanceMetricsData PerformanceMetrics::getData() const {
     data.mMaxDurationMs = mImpl->mMaxDurationMs;
     data.mTotalDurationMs = mImpl->mTotalDurationMs;
     data.mAvgDurationMs = mImpl->mAvgDurationMs;
-    data.mCallCount = mImpl->mCallCount.load();
+    data.mCallCount = mImpl->mCallCount;
     return data;
 }
 
