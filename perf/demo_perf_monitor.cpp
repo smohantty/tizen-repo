@@ -165,7 +165,11 @@ void demonstrateBasicUsage() {
         return sum;
     };
 
-    double result = monitor.measureCall("lambda_computation", computation, 50000);
+    double result;
+    {
+        PERF_MEASURE_SCOPE("lambda_computation");
+        result = computation(50000);
+    }
     std::cout << "Lambda result: " << result << "\n";
 
     std::cout << "Basic usage demo completed.\n";

@@ -71,22 +71,6 @@ public:
     void startMeasurement(const std::string& functionName);
     void endMeasurement(const std::string& functionName);
 
-    // Template for measuring any callable
-    template<typename Func, typename... Args>
-    auto measureCall(const std::string& functionName, Func&& func, Args&&... args)
-        -> decltype(func(args...)) {
-        auto startTime = std::chrono::steady_clock::now();
-        auto result = func(std::forward<Args>(args)...);
-        auto endTime = std::chrono::steady_clock::now();
-
-        auto duration = std::chrono::duration_cast<std::chrono::microseconds>(
-            endTime - startTime).count() / 1000.0;
-
-        // Forward to implementation
-        updateMetrics(functionName, duration);
-        return result;
-    }
-
     // Scoped measurement (RAII)
     class ScopedTimer {
     public:

@@ -95,23 +95,6 @@ void my_function() {
 }
 ```
 
-#### Measuring Functions with Return Values
-```cpp
-// Lambda function
-auto result = monitor.measureCall("computation", [](int n) {
-    return fibonacci(n);
-}, 10);
-
-// Regular function
-int compute(int a, int b) { return a + b; }
-int result = monitor.measureCall("compute", compute, 5, 3);
-
-// Function wrapper
-double duration = monitor.measureFunction("my_task", []() {
-    perform_expensive_task();
-});
-```
-
 #### Class Member Functions
 ```cpp
 class MyClass {
