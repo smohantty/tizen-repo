@@ -182,22 +182,22 @@ void PerfMonitor::Impl::realTimeMonitoringLoop() {
             file << "Total Execution Time: " << std::fixed << std::setprecision(3)
                  << totalExecutionTime << " ms\n\n";
 
-            file << std::left << std::setw(30) << "Function Name"
-                 << std::setw(12) << "Calls"
+            file << std::left << std::setw(45) << "Function Name"
+                 << std::setw(10) << "Calls"
                  << std::setw(12) << "Avg (ms)"
                  << std::setw(12) << "Min (ms)"
                  << std::setw(12) << "Max (ms)"
-                 << std::setw(15) << "Total (ms)" << "\n";
-            file << std::string(93, '-') << "\n";
+                 << std::setw(12) << "Total (ms)" << "\n";
+            file << std::string(103, '-') << "\n";
 
             for (const auto& pair : metricsCopy) {
                 const auto& metrics = pair.second;
-                file << std::left << std::setw(30) << pair.first
-                     << std::setw(12) << metrics.callCount
+                file << std::left << std::setw(45) << pair.first
+                     << std::setw(10) << metrics.callCount
                      << std::setw(12) << std::fixed << std::setprecision(3) << metrics.avgDurationMs
                      << std::setw(12) << std::fixed << std::setprecision(3) << metrics.minDurationMs
                      << std::setw(12) << std::fixed << std::setprecision(3) << metrics.maxDurationMs
-                     << std::setw(15) << std::fixed << std::setprecision(3) << metrics.totalDurationMs << "\n";
+                     << std::setw(12) << std::fixed << std::setprecision(3) << metrics.totalDurationMs << "\n";
             }
 
             file.close();
@@ -350,22 +350,22 @@ std::string PerfMonitor::generateReport() const {
     report << "Total Execution Time: " << std::fixed << std::setprecision(3)
            << totalExecutionTime << " ms\n\n";
 
-    report << std::left << std::setw(30) << "Function Name"
-           << std::setw(12) << "Calls"
+    report << std::left << std::setw(45) << "Function Name"
+           << std::setw(10) << "Calls"
            << std::setw(12) << "Avg (ms)"
            << std::setw(12) << "Min (ms)"
            << std::setw(12) << "Max (ms)"
-           << std::setw(15) << "Total (ms)" << "\n";
-    report << std::string(93, '-') << "\n";
+           << std::setw(12) << "Total (ms)" << "\n";
+    report << std::string(103, '-') << "\n";
 
     for (const auto& pair : metricsCopy) {
         const auto& metrics = pair.second;
-        report << std::left << std::setw(30) << pair.first
-               << std::setw(12) << metrics.callCount
+        report << std::left << std::setw(45) << pair.first
+               << std::setw(10) << metrics.callCount
                << std::setw(12) << std::fixed << std::setprecision(3) << metrics.avgDurationMs
                << std::setw(12) << std::fixed << std::setprecision(3) << metrics.minDurationMs
                << std::setw(12) << std::fixed << std::setprecision(3) << metrics.maxDurationMs
-               << std::setw(15) << std::fixed << std::setprecision(3) << metrics.totalDurationMs << "\n";
+               << std::setw(12) << std::fixed << std::setprecision(3) << metrics.totalDurationMs << "\n";
     }
 
     return report.str();

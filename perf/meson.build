@@ -51,12 +51,6 @@ demo_exe = executable('demo_perf_monitor',
     install_dir : get_option('bindir')
 )
 
-benchmark_exe = executable('benchmark_perf_monitor',
-    'benchmark_perf_monitor.cpp',
-    dependencies : [perf_dep],
-    install : false
-)
-
 # Pkg-config file
 pkg = import('pkgconfig')
 pkg.generate(
