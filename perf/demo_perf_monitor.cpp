@@ -357,7 +357,7 @@ int main() {
         demonstrateDatabaseUsage();
         demonstrateMultiThreading();
         demonstrateGroupingAndAnalysis();
-       // demonstrateRealTimeMonitoring();
+        demonstrateRealTimeMonitoring();
 
         // Generate final comprehensive report
         generateFinalReport();

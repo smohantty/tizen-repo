@@ -8,6 +8,7 @@
 #include <atomic>
 #include <fstream>
 #include <mutex>
+#include <iostream>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -220,25 +221,10 @@ void PerfMonitor::Impl::realTimeMonitoringLoop() {
 }
 
 std::string PerfMonitor::Impl::getTempFilePath() const {
-    std::string tempDir;
-
-#ifdef _WIN32
-    const char* tempEnv = std::getenv("TEMP");
-    if (tempEnv) {
-        tempDir = tempEnv;
-    } else {
-        tempDir = "C:\\temp";
-    }
-    return tempDir + "\\perfmonitor_" + std::to_string(GetCurrentProcessId()) + ".log";
-#else
-    const char* tempEnv = std::getenv("TMPDIR");
-    if (tempEnv) {
-        tempDir = tempEnv;
-    } else {
-        tempDir = "/tmp";
-    }
-    return tempDir + "/perfmonitor_" + std::to_string(getpid()) + ".log";
-#endif
+    std::string tempDir = "/tmp";
+    std::string filename = "/perfmonitor_" + std::to_string(getpid()) + ".log";
+    std::cout << "Temp file path: " << tempDir + filename << std::endl;
+    return tempDir + filename;
 }
 
 void PerfMonitor::Impl::stopRealTimeMonitoring() {
