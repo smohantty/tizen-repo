@@ -1,11 +1,12 @@
 #include "PerfMonitor.h"
-#include <iostream>
-#include <thread>
-#include <chrono>
-#include <vector>
-#include <random>
-#include <cmath>
+
 #include <algorithm>
+#include <chrono>
+#include <cmath>
+#include <iostream>
+#include <random>
+#include <thread>
+#include <vector>
 
 using namespace perf;
 
@@ -238,7 +239,6 @@ void demonstrateDatabaseUsage() {
 void demonstrateMultiThreading() {
     std::cout << "\n=== Multi-threading Demo ===\n";
 
-    auto& monitor = PerfMonitor::getInstance();
     // Note: enableThreadMetrics() not available in current API
 
     const int num_workers = 4;

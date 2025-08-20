@@ -1,12 +1,8 @@
 #pragma once
 
 #include <chrono>
-#include <vector>
-#include <string>
 #include <memory>
-#include <limits>
-#include <mutex>
-#include <atomic>
+#include <string>
 
 namespace perf {
 
@@ -15,13 +11,6 @@ public:
     // Singleton pattern for global access
     static PerfMonitor& getInstance();
 
-    // Constructor and Destructor
-    PerfMonitor();
-    ~PerfMonitor();
-
-    // Non-copyable
-    PerfMonitor(const PerfMonitor&) = delete;
-    PerfMonitor& operator=(const PerfMonitor&) = delete;
 
     // Core measurement APIs
     void startMeasurement(const std::string& functionName);
@@ -50,6 +39,10 @@ public:
     void resetFunction(const std::string& functionName);
 
 private:
+    // Private constructor and destructor for singleton
+    PerfMonitor();
+    ~PerfMonitor();
+
     // Internal helper method for ScopedTimer
     void updateMetrics(const std::string& functionName, double durationMs);
 

@@ -1,20 +1,20 @@
 #include "PerfMonitor.h"
-#include <algorithm>
-#include <iomanip>
-#include <sstream>
-#include <cstdlib>
-#include <unordered_map>
-#include <thread>
-#include <atomic>
-#include <fstream>
-#include <mutex>
-#include <iostream>
 
-#ifdef _WIN32
-#include <windows.h>
-#else
+// Standard library headers
+#include <algorithm>
+#include <atomic>
+#include <cstdlib>
+#include <fstream>
+#include <iomanip>
+#include <limits>
+#include <mutex>
+#include <sstream>
+#include <thread>
+#include <unordered_map>
+#include <vector>
+
+// System headers
 #include <unistd.h>
-#endif
 
 namespace perf {
 
@@ -209,7 +209,6 @@ void PerfMonitor::Impl::realTimeMonitoringLoop() {
 std::string PerfMonitor::Impl::getTempFilePath() const {
     std::string tempDir = "/tmp";
     std::string filename = "/perfmonitor_" + std::to_string(getpid()) + ".log";
-    std::cout << "Temp file path: " << tempDir + filename << std::endl;
     return tempDir + filename;
 }
 
