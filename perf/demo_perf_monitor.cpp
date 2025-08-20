@@ -260,45 +260,14 @@ void demonstrateMultiThreading() {
     std::cout << "All worker threads completed.\n";
 }
 
-void demonstrateGroupingAndAnalysis() {
-    std::cout << "\n=== Grouping and Analysis Demo ===\n";
+void demonstrateReportGeneration() {
+    std::cout << "\n=== Report Generation Demo ===\n";
 
     auto& monitor = PerfMonitor::getInstance();
 
-    // Group functions by category
-    monitor.addFunctionToGroup("data_processing", "DataProcessor::processData");
-    monitor.addFunctionToGroup("data_processing", "DataProcessor::sortData");
-    monitor.addFunctionToGroup("data_processing", "DataProcessor::expensiveCalculation");
-
-    monitor.addFunctionToGroup("network_operations", "NetworkSimulator::sendRequest");
-    monitor.addFunctionToGroup("network_operations", "NetworkSimulator::processResponse");
-
-    monitor.addFunctionToGroup("database_operations", "DatabaseManager::connect");
-    monitor.addFunctionToGroup("database_operations", "DatabaseManager::query");
-    monitor.addFunctionToGroup("database_operations", "DatabaseManager::disconnect");
-
-    // Analyze group performance
-    auto data_metrics = monitor.getGroupMetrics("data_processing");
-    auto network_metrics = monitor.getGroupMetrics("network_operations");
-    auto db_metrics = monitor.getGroupMetrics("database_operations");
-
-    std::cout << "Performance Analysis by Category:\n";
-    std::cout << "  Data Processing: " << data_metrics.mCallCount
-              << " calls, avg " << data_metrics.mAvgDurationMs << "ms\n";
-    std::cout << "  Network Operations: " << network_metrics.mCallCount
-              << " calls, avg " << network_metrics.mAvgDurationMs << "ms\n";
-    std::cout << "  Database Operations: " << db_metrics.mCallCount
-              << " calls, avg " << db_metrics.mAvgDurationMs << "ms\n";
-
-    // Show top performance bottlenecks
-    auto slowest = monitor.getAllMetrics(); // Note: getTopSlowFunctions() not available
-    std::cout << "\nAll Performance Metrics:\n";
-    for (size_t i = 0; i < slowest.size() && i < 5; ++i) {
-        const auto& func_name = slowest[i].first;
-        const auto& metrics = slowest[i].second;
-        std::cout << "  " << (i+1) << ". " << func_name
-                  << " (avg: " << metrics.mAvgDurationMs << "ms)\n";
-    }
+    // Generate and display comprehensive performance report
+    std::cout << "Comprehensive Performance Report:\n";
+    std::cout << monitor.generateReport();
 }
 
 void demonstrateRealTimeMonitoring() {
@@ -360,7 +329,7 @@ int main() {
         demonstrateNetworkSimulation();
         demonstrateDatabaseUsage();
         demonstrateMultiThreading();
-        demonstrateGroupingAndAnalysis();
+        demonstrateReportGeneration();
         demonstrateRealTimeMonitoring();
 
         // Generate final comprehensive report

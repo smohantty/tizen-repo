@@ -151,24 +151,6 @@ auto memory_history = monitor.getMemoryHistory();
 auto custom_metrics = monitor.getCustomMetrics("cache_hit_rate");
 ```
 
-### Function Grouping and Analysis
-```cpp
-// Group related functions
-monitor.addFunctionToGroup("database", "connect_db");
-monitor.addFunctionToGroup("database", "execute_query");
-monitor.addFunctionToGroup("database", "disconnect_db");
-
-monitor.addFunctionToGroup("network", "send_request");
-monitor.addFunctionToGroup("network", "receive_response");
-
-// Get aggregate metrics for groups
-auto db_metrics = monitor.getGroupMetrics("database");
-auto net_metrics = monitor.getGroupMetrics("network");
-
-std::cout << "Database operations: " << db_metrics.call_count
-          << " calls, avg " << db_metrics.avg_duration_ms << "ms\n";
-```
-
 ### Real-time Monitoring
 ```cpp
 // Set up real-time callback
@@ -208,40 +190,6 @@ monitor.setEnabled(false);
 ```
 
 ## Reporting and Analysis
-
-### Getting Metrics
-```cpp
-// Individual function metrics
-auto metrics = monitor.getMetrics("my_function");
-std::cout << "Calls: " << metrics.call_count << "\n"
-          << "Average: " << metrics.avg_duration_ms << "ms\n"
-          << "Min: " << metrics.min_duration_ms << "ms\n"
-          << "Max: " << metrics.max_duration_ms << "ms\n"
-          << "Total: " << metrics.total_duration_ms << "ms\n";
-
-// All metrics
-auto all_metrics = monitor.getAllMetrics();
-for (const auto& [name, metrics] : all_metrics) {
-    std::cout << name << ": " << metrics.avg_duration_ms << "ms\n";
-}
-```
-
-### Performance Analysis
-```cpp
-// Find performance bottlenecks
-auto slowest = monitor.getTopSlowFunctions(10);
-auto most_called = monitor.getMostCalledFunctions(10);
-
-std::cout << "Top 10 slowest functions:\n";
-for (const auto& func : slowest) {
-    auto m = monitor.getMetrics(func);
-    std::cout << "  " << func << ": " << m.avg_duration_ms << "ms\n";
-}
-
-// Overall statistics
-std::cout << "Total execution time: " << monitor.getTotalExecutionTime() << "ms\n";
-std::cout << "Total function calls: " << monitor.getTotalFunctionCalls() << "\n";
-```
 
 ### Report Generation
 ```cpp

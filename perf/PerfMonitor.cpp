@@ -18,116 +18,85 @@
 
 namespace perf {
 
-// PerformanceMetrics PIMPL implementation class
-class PerformanceMetrics::Impl {
-public:
-    Impl() = default;
-    ~Impl() = default;
+// PerformanceMetrics - simple POD type with grouped data
+struct PerformanceMetrics {
+    // Grouped data structure
+    struct Data {
+        double minDurationMs = std::numeric_limits<double>::max();
+        double maxDurationMs = 0.0;
+        double totalDurationMs = 0.0;
+        double avgDurationMs = 0.0;
+        size_t callCount = 0;
+    };
 
-    // Data members with m-prefix camelCase naming
-    double mMinDurationMs = std::numeric_limits<double>::max();
-    double mMaxDurationMs = 0.0;
-    double mTotalDurationMs = 0.0;
-    double mAvgDurationMs = 0.0;
-    size_t mCallCount = 0;
-    mutable std::mutex mMutex; // For coordinated updates
+    Data mData;                    // All metrics data grouped together
+    mutable std::mutex mMutex;     // Protects mData
+
+    // Methods for internal use
+    void update(double durationMs);
+    void reset();
+    void addToGroup(size_t callCount, double totalDuration, double minDuration, double maxDuration);
+
+    // Efficient method to get all data with single lock
+    Data getAllData() const;
 };
 
 // PerformanceMetrics implementation
-PerformanceMetrics::PerformanceMetrics() : mImpl(new Impl()) {
-}
-
-PerformanceMetrics::~PerformanceMetrics() {
-    delete mImpl;
-}
 
 void PerformanceMetrics::update(double durationMs) {
-    std::lock_guard<std::mutex> lock(mImpl->mMutex);
+    std::lock_guard<std::mutex> lock(mMutex);
 
-    size_t currentCount = mImpl->mCallCount;
+    size_t currentCount = mData.callCount;
     if (currentCount == 0) {
-        mImpl->mMinDurationMs = durationMs;
-        mImpl->mMaxDurationMs = durationMs;
+        mData.minDurationMs = durationMs;
+        mData.maxDurationMs = durationMs;
     } else {
-        mImpl->mMinDurationMs = std::min(mImpl->mMinDurationMs, durationMs);
-        mImpl->mMaxDurationMs = std::max(mImpl->mMaxDurationMs, durationMs);
+        mData.minDurationMs = std::min(mData.minDurationMs, durationMs);
+        mData.maxDurationMs = std::max(mData.maxDurationMs, durationMs);
     }
 
     // Update total and count
-    mImpl->mTotalDurationMs += durationMs;
-    mImpl->mCallCount++;
-    size_t newCount = mImpl->mCallCount;
+    mData.totalDurationMs += durationMs;
+    mData.callCount++;
+    size_t newCount = mData.callCount;
 
     // Update average
-    mImpl->mAvgDurationMs = mImpl->mTotalDurationMs / newCount;
+    mData.avgDurationMs = mData.totalDurationMs / newCount;
 }
 
 void PerformanceMetrics::reset() {
-    std::lock_guard<std::mutex> lock(mImpl->mMutex);
-    mImpl->mMinDurationMs = std::numeric_limits<double>::max();
-    mImpl->mMaxDurationMs = 0.0;
-    mImpl->mTotalDurationMs = 0.0;
-    mImpl->mAvgDurationMs = 0.0;
-    mImpl->mCallCount = 0;
-}
-
-double PerformanceMetrics::getMinDurationMs() const {
-    std::lock_guard<std::mutex> lock(mImpl->mMutex);
-    return mImpl->mMinDurationMs;
-}
-
-double PerformanceMetrics::getMaxDurationMs() const {
-    std::lock_guard<std::mutex> lock(mImpl->mMutex);
-    return mImpl->mMaxDurationMs;
-}
-
-double PerformanceMetrics::getTotalDurationMs() const {
-    std::lock_guard<std::mutex> lock(mImpl->mMutex);
-    return mImpl->mTotalDurationMs;
-}
-
-double PerformanceMetrics::getAvgDurationMs() const {
-    std::lock_guard<std::mutex> lock(mImpl->mMutex);
-    return mImpl->mAvgDurationMs;
-}
-
-size_t PerformanceMetrics::getCallCount() const {
-    std::lock_guard<std::mutex> lock(mImpl->mMutex);
-    return mImpl->mCallCount;
+    std::lock_guard<std::mutex> lock(mMutex);
+    mData = Data{};  // Reset to default values
 }
 
 void PerformanceMetrics::addToGroup(size_t callCount, double totalDuration, double minDuration, double maxDuration) {
-    std::lock_guard<std::mutex> lock(mImpl->mMutex);
+    std::lock_guard<std::mutex> lock(mMutex);
 
-        size_t currentCount = mImpl->mCallCount;
+    size_t currentCount = mData.callCount;
     size_t newCount = currentCount + callCount;
 
-    mImpl->mCallCount = newCount;
-    mImpl->mTotalDurationMs += totalDuration;
+    mData.callCount = newCount;
+    mData.totalDurationMs += totalDuration;
 
     if (currentCount == 0) {
-        mImpl->mMinDurationMs = minDuration;
-        mImpl->mMaxDurationMs = maxDuration;
+        mData.minDurationMs = minDuration;
+        mData.maxDurationMs = maxDuration;
     } else {
-        mImpl->mMinDurationMs = std::min(mImpl->mMinDurationMs, minDuration);
-        mImpl->mMaxDurationMs = std::max(mImpl->mMaxDurationMs, maxDuration);
+        mData.minDurationMs = std::min(mData.minDurationMs, minDuration);
+        mData.maxDurationMs = std::max(mData.maxDurationMs, maxDuration);
     }
 
     if (newCount > 0) {
-        mImpl->mAvgDurationMs = mImpl->mTotalDurationMs / newCount;
+        mData.avgDurationMs = mData.totalDurationMs / newCount;
     }
 }
 
-PerformanceMetricsData PerformanceMetrics::getData() const {
-    std::lock_guard<std::mutex> lock(mImpl->mMutex);
-    PerformanceMetricsData data;
-    data.mMinDurationMs = mImpl->mMinDurationMs;
-    data.mMaxDurationMs = mImpl->mMaxDurationMs;
-    data.mTotalDurationMs = mImpl->mTotalDurationMs;
-    data.mAvgDurationMs = mImpl->mAvgDurationMs;
-    data.mCallCount = mImpl->mCallCount;
-    return data;
+PerformanceMetrics::Data PerformanceMetrics::getAllData() const {
+    std::lock_guard<std::mutex> lock(mMutex);
+    return mData;  // Simple copy of the grouped data
 }
+
+
 
 // PIMPL implementation class
 class PerfMonitor::Impl {
@@ -136,14 +105,12 @@ public:
     ~Impl() = default;
 
     // Internal data structures with m-prefix camelCase naming
-    std::unordered_map<std::string, PerformanceMetrics> mFunctionMetrics;
+    std::unordered_map<std::string, std::unique_ptr<PerformanceMetrics>> mFunctionMetrics;
     std::unordered_map<std::string, std::chrono::steady_clock::time_point> mActiveMeasurements;
-    std::unordered_map<std::string, std::vector<std::string>> mFunctionGroups;
 
     // Mutexes for thread safety
     mutable std::mutex mFunctionMetricsMutex;
     mutable std::mutex mActiveMeasurementsMutex;
-    mutable std::mutex mFunctionGroupsMutex;
 
     // Real-time monitoring with m-prefix camelCase naming
     std::atomic<bool> mRealTimeMonitoring{false};
@@ -171,23 +138,42 @@ void PerfMonitor::Impl::realTimeMonitoringLoop() {
             file << "Last updated at timestamp: " << timestamp << "\n\n";
 
             // Generate current statistics report with shared lock for reading
+            // Simple struct for monitoring data
+            struct MonitorData {
+                double minDurationMs;
+                double maxDurationMs;
+                double totalDurationMs;
+                double avgDurationMs;
+                size_t callCount;
+            };
+
             size_t totalCalls = 0;
             double totalExecutionTime = 0.0;
             size_t functionCount = 0;
 
             // Create a copy of the metrics to minimize lock time
-            std::unordered_map<std::string, PerformanceMetricsData> metricsCopy;
+            std::unordered_map<std::string, MonitorData> metricsCopy;
             {
                 std::lock_guard<std::mutex> lock(mFunctionMetricsMutex);
                 for (const auto& pair : mFunctionMetrics) {
-                    metricsCopy[pair.first] = pair.second.getData();
+                    if (pair.second) {  // Check if unique_ptr is valid
+                        const auto& metrics = *pair.second;
+                        auto data = metrics.getAllData();
+                        metricsCopy[pair.first] = {
+                            data.minDurationMs,
+                            data.maxDurationMs,
+                            data.totalDurationMs,
+                            data.avgDurationMs,
+                            data.callCount
+                        };
+                    }
                 }
                 functionCount = mFunctionMetrics.size();
             }
 
             for (const auto& pair : metricsCopy) {
-                totalCalls += pair.second.mCallCount;
-                totalExecutionTime += pair.second.mTotalDurationMs;
+                totalCalls += pair.second.callCount;
+                totalExecutionTime += pair.second.totalDurationMs;
             }
 
             file << "=== Current Performance Statistics ===\n\n";
@@ -207,11 +193,11 @@ void PerfMonitor::Impl::realTimeMonitoringLoop() {
             for (const auto& pair : metricsCopy) {
                 const auto& metrics = pair.second;
                 file << std::left << std::setw(30) << pair.first
-                     << std::setw(12) << metrics.mCallCount
-                     << std::setw(12) << std::fixed << std::setprecision(3) << metrics.mAvgDurationMs
-                     << std::setw(12) << std::fixed << std::setprecision(3) << metrics.mMinDurationMs
-                     << std::setw(12) << std::fixed << std::setprecision(3) << metrics.mMaxDurationMs
-                     << std::setw(15) << std::fixed << std::setprecision(3) << metrics.mTotalDurationMs << "\n";
+                     << std::setw(12) << metrics.callCount
+                     << std::setw(12) << std::fixed << std::setprecision(3) << metrics.avgDurationMs
+                     << std::setw(12) << std::fixed << std::setprecision(3) << metrics.minDurationMs
+                     << std::setw(12) << std::fixed << std::setprecision(3) << metrics.maxDurationMs
+                     << std::setw(15) << std::fixed << std::setprecision(3) << metrics.totalDurationMs << "\n";
             }
 
             file.close();
@@ -235,13 +221,12 @@ void PerfMonitor::Impl::stopRealTimeMonitoring() {
 }
 
 // PerfMonitor implementation
-PerfMonitor::PerfMonitor() : mImpl(new Impl()) {
+PerfMonitor::PerfMonitor() : mImpl(std::make_unique<Impl>()) {
 }
 
 PerfMonitor::~PerfMonitor() {
     if (mImpl) {
         stopRealTimeMonitoring();
-        delete mImpl;
     }
 }
 
@@ -279,14 +264,22 @@ void PerfMonitor::endMeasurement(const std::string& functionName) {
         // Update metrics with lock
         {
             std::lock_guard<std::mutex> lock(mImpl->mFunctionMetricsMutex);
-            mImpl->mFunctionMetrics[functionName].update(duration);
+            auto& metrics = mImpl->mFunctionMetrics[functionName];
+            if (!metrics) {
+                metrics = std::make_unique<PerformanceMetrics>();
+            }
+            metrics->update(duration);
         }
     }
 }
 
 void PerfMonitor::updateMetrics(const std::string& functionName, double durationMs) {
     std::lock_guard<std::mutex> lock(mImpl->mFunctionMetricsMutex);
-    mImpl->mFunctionMetrics[functionName].update(durationMs);
+    auto& metrics = mImpl->mFunctionMetrics[functionName];
+    if (!metrics) {
+        metrics = std::make_unique<PerformanceMetrics>();
+    }
+    metrics->update(durationMs);
 }
 
 PerfMonitor::ScopedTimer::ScopedTimer(const std::string& functionName)
@@ -308,44 +301,47 @@ PerfMonitor::ScopedTimer::~ScopedTimer() {
     }
 }
 
-PerformanceMetricsData PerfMonitor::getMetrics(const std::string& functionName) const {
-    std::lock_guard<std::mutex> lock(mImpl->mFunctionMetricsMutex);
-    auto it = mImpl->mFunctionMetrics.find(functionName);
-    return (it != mImpl->mFunctionMetrics.end()) ? it->second.getData() : PerformanceMetricsData{};
-}
 
-std::vector<std::pair<std::string, PerformanceMetricsData>> PerfMonitor::getAllMetrics() const {
-    std::lock_guard<std::mutex> lock(mImpl->mFunctionMetricsMutex);
-    std::vector<std::pair<std::string, PerformanceMetricsData>> result;
-    result.reserve(mImpl->mFunctionMetrics.size());
-
-    for (const auto& pair : mImpl->mFunctionMetrics) {
-        result.emplace_back(pair.first, pair.second.getData());
-    }
-
-    return result;
-}
 
 std::string PerfMonitor::generateReport() const {
     std::ostringstream report;
+
+    // Simple struct for report data
+    struct ReportData {
+        double minDurationMs;
+        double maxDurationMs;
+        double totalDurationMs;
+        double avgDurationMs;
+        size_t callCount;
+    };
 
     size_t totalCalls = 0;
     double totalExecutionTime = 0.0;
     size_t functionCount = 0;
 
     // Create a copy of the metrics to minimize lock time
-    std::unordered_map<std::string, PerformanceMetricsData> metricsCopy;
+    std::unordered_map<std::string, ReportData> metricsCopy;
     {
         std::lock_guard<std::mutex> lock(mImpl->mFunctionMetricsMutex);
         for (const auto& pair : mImpl->mFunctionMetrics) {
-            metricsCopy[pair.first] = pair.second.getData();
+            if (pair.second) {  // Check if unique_ptr is valid
+                const auto& metrics = *pair.second;
+                auto data = metrics.getAllData();
+                metricsCopy[pair.first] = {
+                    data.minDurationMs,
+                    data.maxDurationMs,
+                    data.totalDurationMs,
+                    data.avgDurationMs,
+                    data.callCount
+                };
+            }
         }
         functionCount = mImpl->mFunctionMetrics.size();
     }
 
     for (const auto& pair : metricsCopy) {
-        totalCalls += pair.second.mCallCount;
-        totalExecutionTime += pair.second.mTotalDurationMs;
+        totalCalls += pair.second.callCount;
+        totalExecutionTime += pair.second.totalDurationMs;
     }
 
     report << "=== Performance Monitor Report ===\n\n";
@@ -365,11 +361,11 @@ std::string PerfMonitor::generateReport() const {
     for (const auto& pair : metricsCopy) {
         const auto& metrics = pair.second;
         report << std::left << std::setw(30) << pair.first
-               << std::setw(12) << metrics.mCallCount
-               << std::setw(12) << std::fixed << std::setprecision(3) << metrics.mAvgDurationMs
-               << std::setw(12) << std::fixed << std::setprecision(3) << metrics.mMinDurationMs
-               << std::setw(12) << std::fixed << std::setprecision(3) << metrics.mMaxDurationMs
-               << std::setw(15) << std::fixed << std::setprecision(3) << metrics.mTotalDurationMs << "\n";
+               << std::setw(12) << metrics.callCount
+               << std::setw(12) << std::fixed << std::setprecision(3) << metrics.avgDurationMs
+               << std::setw(12) << std::fixed << std::setprecision(3) << metrics.minDurationMs
+               << std::setw(12) << std::fixed << std::setprecision(3) << metrics.maxDurationMs
+               << std::setw(15) << std::fixed << std::setprecision(3) << metrics.totalDurationMs << "\n";
     }
 
     return report.str();
@@ -398,7 +394,7 @@ void PerfMonitor::startRealTimeMonitoring(std::chrono::milliseconds interval) {
     }
 
     mImpl->mRealTimeMonitoring.store(true);
-    mImpl->mRealTimeThread = std::thread(&Impl::realTimeMonitoringLoop, mImpl);
+    mImpl->mRealTimeThread = std::thread(&Impl::realTimeMonitoringLoop, mImpl.get());
 }
 
 void PerfMonitor::stopRealTimeMonitoring() {
@@ -409,44 +405,7 @@ std::string PerfMonitor::getRealTimeMonitoringFilePath() const {
     return mImpl->mMonitoringFilePath;
 }
 
-void PerfMonitor::addFunctionToGroup(const std::string& groupName, const std::string& functionName) {
-    std::lock_guard<std::mutex> lock(mImpl->mFunctionGroupsMutex);
-    mImpl->mFunctionGroups[groupName].push_back(functionName);
-}
 
-PerformanceMetricsData PerfMonitor::getGroupMetrics(const std::string& groupName) const {
-    PerformanceMetrics groupMetrics;
-
-        // Get function names from the group
-    std::vector<std::string> functionNames;
-    {
-        std::lock_guard<std::mutex> lock(mImpl->mFunctionGroupsMutex);
-        auto groupIt = mImpl->mFunctionGroups.find(groupName);
-        if (groupIt == mImpl->mFunctionGroups.end()) {
-            return groupMetrics.getData();
-        }
-        functionNames = groupIt->second;
-    }
-
-    // Access metrics with lock
-    std::lock_guard<std::mutex> metricsLock(mImpl->mFunctionMetricsMutex);
-    for (const auto& functionName : functionNames) {
-        auto metricsIt = mImpl->mFunctionMetrics.find(functionName);
-        if (metricsIt != mImpl->mFunctionMetrics.end()) {
-            const auto& metrics = metricsIt->second;
-
-            size_t callCount = metrics.getCallCount();
-            double totalDuration = metrics.getTotalDurationMs();
-            double minDuration = metrics.getMinDurationMs();
-            double maxDuration = metrics.getMaxDurationMs();
-
-            // Use the proper method for group aggregation
-            groupMetrics.addToGroup(callCount, totalDuration, minDuration, maxDuration);
-        }
-    }
-
-    return groupMetrics.getData();
-}
 
 void PerfMonitor::reset() {
     {
@@ -457,17 +416,13 @@ void PerfMonitor::reset() {
         std::lock_guard<std::mutex> lock(mImpl->mActiveMeasurementsMutex);
         mImpl->mActiveMeasurements.clear();
     }
-    {
-        std::lock_guard<std::mutex> lock(mImpl->mFunctionGroupsMutex);
-        mImpl->mFunctionGroups.clear();
-    }
 }
 
 void PerfMonitor::resetFunction(const std::string& functionName) {
     std::lock_guard<std::mutex> lock(mImpl->mFunctionMetricsMutex);
     auto it = mImpl->mFunctionMetrics.find(functionName);
-    if (it != mImpl->mFunctionMetrics.end()) {
-        it->second.reset();
+    if (it != mImpl->mFunctionMetrics.end() && it->second) {
+        it->second->reset();
     }
 }
 
