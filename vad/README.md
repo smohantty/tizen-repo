@@ -129,19 +129,130 @@ void reset()
 ```
 Reset detector state.
 
-## Example
+## Examples
 
-Run the included example to see the VAD system in action:
+### Basic VAD Example
+
+Run the basic example to see the VAD system in action:
 
 ```bash
 ./build/vad_example
 ```
 
-The example demonstrates:
+This demonstrates:
 - Processing different types of audio (silence, speech simulation)
 - Real-time processing with small buffer chunks
 - Event callbacks for speech start/end detection
 - Configuration of detection parameters
+
+### ASR Integration Examples
+
+See how to integrate VAD with ASR systems:
+
+```bash
+# Manual state checking approach
+./build/vad_asr_integration
+
+# Callback-based approach (recommended)
+./build/callback_asr_integration
+```
+
+These examples show:
+- Using VAD as a filter for ASR modules
+- Automatic speech session management
+- Proper end-of-speech signaling
+- Different integration patterns
+
+## Configuration & Tuning
+
+### Default Values
+
+The VAD comes with sensible defaults:
+- **Energy Threshold**: 1,000,000 (conservative, good for noisy environments)
+- **Min Speech Duration**: 100ms (quick response)
+- **Min Silence Duration**: 200ms (allows short pauses)
+- **Smoothing**: 3-frame majority voting
+
+### Practical Tuning Examples
+
+#### For Quiet Environment + Clear Speech
+```cpp
+vad.setEnergyThreshold(5000.0);      // More sensitive
+vad.setMinSpeechDuration(150);       // Quick response
+vad.setMinSilenceDuration(300);      // Allow natural pauses
+```
+
+#### For Noisy Environment
+```cpp
+vad.setEnergyThreshold(50000.0);     // Less sensitive to noise
+vad.setMinSpeechDuration(250);       // Avoid noise triggers
+vad.setMinSilenceDuration(500);      // Wait for clear silence
+```
+
+#### For Conversational ASR (Back-and-forth dialog)
+```cpp
+vad.setEnergyThreshold(8000.0);
+vad.setMinSpeechDuration(200);
+vad.setMinSilenceDuration(400);      // Quick turnarounds
+```
+
+#### For Dictation ASR (Long utterances)
+```cpp
+vad.setEnergyThreshold(10000.0);
+vad.setMinSpeechDuration(300);
+vad.setMinSilenceDuration(800);      // Allow thinking pauses
+```
+
+#### For Phone/VoIP Applications
+```cpp
+vad.setEnergyThreshold(15000.0);     // Account for compression artifacts
+vad.setMinSpeechDuration(200);
+vad.setMinSilenceDuration(600);      // Handle network delays
+```
+
+### Parameter Guidelines
+
+**Energy Threshold**:
+- **1,000-10,000**: Very sensitive (quiet environments, close microphones)
+- **10,000-50,000**: Balanced (most applications)
+- **50,000+**: Conservative (noisy environments, distant microphones)
+
+**Min Speech Duration**:
+- **100-200ms**: Responsive (risk of false positives)
+- **200-400ms**: Balanced (good for most speech)
+- **400ms+**: Conservative (may miss short words)
+
+**Min Silence Duration**:
+- **200-400ms**: Quick response (may split sentences)
+- **400-800ms**: Balanced (handles natural pauses)
+- **800ms+**: Patient (waits for clear speech end)
+
+### ASR Integration Tips
+
+1. **Lower latency**: Reduce min silence duration
+2. **Better accuracy**: Increase min speech duration to avoid noise
+3. **Handle pauses**: Increase min silence duration for thoughtful speakers
+4. **Noisy environments**: Increase energy threshold significantly
+
+### Troubleshooting
+
+**VAD too sensitive (false positives)**:
+- Increase `setEnergyThreshold()`
+- Increase `setMinSpeechDuration()`
+- Check for background noise
+
+**VAD not sensitive enough (missing speech)**:
+- Decrease `setEnergyThreshold()`
+- Check audio levels (may need amplification)
+- Verify microphone placement
+
+**Speech gets cut off during pauses**:
+- Increase `setMinSilenceDuration()`
+- Consider longer utterance patterns
+
+**Delayed speech end detection**:
+- Decrease `setMinSilenceDuration()`
+- Tune for your specific use case
 
 ## Algorithm
 
