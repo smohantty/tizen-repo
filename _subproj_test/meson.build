@@ -6,6 +6,9 @@ ssl_dep = ssl_sp.get_variable('ssl_dep')
 wakeword_sp = subproject('wakeword')
 wakeword_dep = wakeword_sp.get_variable('wakeword_dep')
 
-executable('app', 'src/main.cpp', dependencies: [ssl_dep, wakeword_dep])
+vad_sp = subproject('vad')
+vad_dep = vad_sp.get_variable('vad_dep')
+
+executable('app', 'src/main.cpp', dependencies: [ssl_dep, vad_dep])
 
 
