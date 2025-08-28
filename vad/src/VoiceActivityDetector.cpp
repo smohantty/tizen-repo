@@ -10,13 +10,13 @@ namespace vad {
 using SpeechState = vad::SpeechState;
 
 namespace {
-    // Default configuration constants
-    constexpr float kDefaultSpeechThreshold = 0.5f;
-    constexpr uint64_t kDefaultMinSpeechDurationMs = 100;
-    constexpr uint64_t kDefaultMinSilenceDurationMs = 200;
-    constexpr uint64_t kDefaultPrerollDurationMs = 500;
-    constexpr size_t kSmoothingWindowFrames = 10; // 100ms window - better for ASR streaming
-    constexpr float kExponentialSmoothingAlpha = 0.2f; // Decay factor for exponential averaging
+    // Default configuration constants optimized for real-time ASR streaming
+    constexpr float kDefaultSpeechThreshold = 0.25f;        // More sensitive for better speech onset detection
+    constexpr uint64_t kDefaultMinSpeechDurationMs = 50;    // Faster response, captures short words
+    constexpr uint64_t kDefaultMinSilenceDurationMs = 400;  // Allow natural pauses without cutting speech
+    constexpr uint64_t kDefaultPrerollDurationMs = 250;    // Reduced memory usage, still captures speech onset
+    constexpr size_t kSmoothingWindowFrames = 5;           // 50ms window - more responsive
+    constexpr float kExponentialSmoothingAlpha = 0.35f;    // More responsive exponential averaging
 
     // TensorFlow Lite model requirements
     constexpr size_t kTensorFlowLiteFrameSize = 160; // 10ms at 16kHz as required by model
@@ -130,9 +130,9 @@ public:
             // Use TensorFlow Lite model to get speech probability
             float speechProbability = mModel->predict(frame);
 
-            // Apply smoothing - choose one method for testing:
-            bool smoothedDetection = updateSmoothing(speechProbability);           // Simple moving average
-            // bool smoothedDetection = updateSmoothingExponential(speechProbability); // Exponential moving average
+            // Apply smoothing - exponential is better for real-time ASR:
+            bool smoothedDetection = updateSmoothingExponential(speechProbability); // Exponential moving average (default)
+            // bool smoothedDetection = updateSmoothing(speechProbability);           // Simple moving average (alternative)
 
             // Update speech state and trigger callbacks if needed
             updateSpeechState(smoothedDetection, frame);
@@ -150,7 +150,7 @@ private:
         // Add new audio to preroll buffer
         mPrerollBuffer.insert(mPrerollBuffer.end(), audiobuff.begin(), audiobuff.end());
 
-        // Keep only the required preroll duration (fixed at 500ms)
+        // Keep only the required preroll duration (now optimized to 250ms)
         size_t maxPrerollSamples = (kDefaultPrerollDurationMs * mSampleRate) / 1000;
         if (mPrerollBuffer.size() > maxPrerollSamples) {
             size_t excessSamples = mPrerollBuffer.size() - maxPrerollSamples;
