@@ -4,10 +4,6 @@
 #include <numeric>
 #include <chrono>
 #include <stdexcept>
-// Note: TensorFlow Lite includes would be added here in real implementation:
-// #include <tensorflow/lite/interpreter.h>
-// #include <tensorflow/lite/kernels/register.h>
-// #include <tensorflow/lite/model.h>
 
 namespace vad {
 
@@ -20,6 +16,7 @@ namespace {
     constexpr uint64_t kDefaultMinSilenceDurationMs = 200;
     constexpr uint64_t kDefaultPrerollDurationMs = 500;
     constexpr size_t kSmoothingWindowFrames = 10; // 100ms window - better for ASR streaming
+    constexpr float kExponentialSmoothingAlpha = 0.2f; // Decay factor for exponential averaging
 
     // TensorFlow Lite model requirements
     constexpr size_t kTensorFlowLiteFrameSize = 160; // 10ms at 16kHz as required by model
@@ -82,6 +79,10 @@ public:
     std::vector<float> mRecentProbabilities;
     size_t mProbabilityIndex;
 
+    // Exponential smoothing
+    float mExponentialAverage;
+    bool mExponentialAverageInitialized;
+
     // TensorFlow Lite model
     std::unique_ptr<MockTensorFlowLiteModel> mModel;
 
@@ -99,6 +100,8 @@ public:
         , mSpeechStartTimestamp(0)
         , mSilenceStartTimestamp(0)
         , mProbabilityIndex(0)
+        , mExponentialAverage(0.0f)
+        , mExponentialAverageInitialized(false)
     {
         mRecentProbabilities.resize(kSmoothingWindowFrames, 0.0f);
 
@@ -127,8 +130,9 @@ public:
             // Use TensorFlow Lite model to get speech probability
             float speechProbability = mModel->predict(frame);
 
-            // Apply smoothing
-            bool smoothedDetection = updateSmoothing(speechProbability);
+            // Apply smoothing - choose one method for testing:
+            bool smoothedDetection = updateSmoothing(speechProbability);           // Simple moving average
+            // bool smoothedDetection = updateSmoothingExponential(speechProbability); // Exponential moving average
 
             // Update speech state and trigger callbacks if needed
             updateSpeechState(smoothedDetection, frame);
@@ -164,6 +168,21 @@ private:
 
         // Return true if average probability exceeds threshold
         return avgProbability > mSpeechThreshold;
+    }
+
+    bool updateSmoothingExponential(float speechProbability) {
+        if (!mExponentialAverageInitialized) {
+            // Initialize with first value
+            mExponentialAverage = speechProbability;
+            mExponentialAverageInitialized = true;
+        } else {
+            // Exponential moving average: EMA = α * new_value + (1-α) * old_EMA
+            mExponentialAverage = kExponentialSmoothingAlpha * speechProbability +
+                                 (1.0f - kExponentialSmoothingAlpha) * mExponentialAverage;
+        }
+
+        // Return true if exponential average exceeds threshold
+        return mExponentialAverage > mSpeechThreshold;
     }
 
     void updateSpeechState(bool detected, const std::vector<short>& currentFrame) {
@@ -228,6 +247,8 @@ public:
         mSilenceStartTimestamp = 0;
         mProbabilityIndex = 0;
         std::fill(mRecentProbabilities.begin(), mRecentProbabilities.end(), 0.0f);
+        mExponentialAverage = 0.0f;
+        mExponentialAverageInitialized = false;
     }
 
     void setSpeechThreshold(float threshold) {
