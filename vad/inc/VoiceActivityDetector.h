@@ -6,27 +6,37 @@
 namespace vad {
 
 /**
- * @brief Voice Activity Detection system that detects speech start and end
- * from continuous audio buffer streams.
+ * @brief Speech state enumeration for streaming ASR
+ */
+enum class SpeechState {
+    START,      ///< Speech has just started - initialize ASR
+    CONTINUE,   ///< Speech is ongoing - continue feeding ASR
+    END         ///< Speech has ended - finalize ASR
+};
+
+/**
+ * @brief Voice Activity Detection system using TensorFlow Lite model
  *
- * This class provides a simple API to process audio buffers and detect
- * when speech activity begins and ends.
+ * This class uses a TensorFlow Lite model to detect speech activity from
+ * audio samples and provides callbacks with preroll buffers for ASR processing.
  */
 class VoiceActivityDetector {
 public:
     /**
      * @brief Callback function type for speech events
-     * @param isSpeechActive true when speech starts, false when speech ends
+     * @param speechState current speech state (START, CONTINUE, END)
+     * @param audioBuffer audio buffer - preroll buffer for START, current buffer for CONTINUE, empty for END
      * @param timestamp relative timestamp in milliseconds from start of processing
      */
-    using SpeechEventCallback = std::function<void(bool isSpeechActive, uint64_t timestamp)>;
+    using SpeechEventCallback = std::function<void(SpeechState speechState, const std::vector<short>& audioBuffer, uint64_t timestamp)>;
 
     /**
-     * @brief Constructor with optional parameters
+     * @brief Constructor
+     * @param modelPath Path to the TensorFlow Lite model file
      * @param sampleRate Audio sample rate in Hz (default: 16000)
-     * @param frameSize Number of samples per processing frame (default: 1600, which is 100ms at 16kHz)
+     * Note: Frame size is fixed at 160 samples (10ms at 16kHz) as required by TensorFlow Lite model
      */
-    explicit VoiceActivityDetector(int sampleRate = 16000, size_t frameSize = 1600);
+    explicit VoiceActivityDetector(const std::string& modelPath, int sampleRate = 16000);
 
     /**
      * @brief Destructor
@@ -34,23 +44,16 @@ public:
     ~VoiceActivityDetector();
 
     /**
-     * @brief Process a buffer of audio samples
-     * @param buffer Audio samples (16-bit signed integers)
-     * @return true if voice activity state changed during processing
+     * @brief Process audio samples and update voice activity state
+     * @param audiobuff Audio samples (16-bit signed integers)
      */
-    bool processAudioBuffer(const std::vector<short>& buffer);
+    void process(std::vector<short> audiobuff);
 
     /**
      * @brief Check if speech is currently active
      * @return true if speech is detected, false otherwise
      */
     bool isSpeechActive() const;
-
-    /**
-     * @brief Get timestamp of last speech state change
-     * @return timestamp in milliseconds from start of processing
-     */
-    uint64_t getLastStateChangeTimestamp() const;
 
     /**
      * @brief Set callback function for speech events
@@ -64,20 +67,20 @@ public:
     void reset();
 
     /**
-     * @brief Set energy threshold for voice activity detection
-     * @param threshold Energy threshold value (higher = less sensitive)
+     * @brief Set speech probability threshold (0.0 to 1.0)
+     * @param threshold Probability threshold for speech detection (default: 0.5)
      */
-    void setEnergyThreshold(double threshold);
+    void setSpeechThreshold(float threshold);
 
     /**
      * @brief Set minimum speech duration to trigger speech start event
-     * @param durationMs Minimum duration in milliseconds
+     * @param durationMs Minimum duration in milliseconds (default: 100ms)
      */
     void setMinSpeechDuration(uint64_t durationMs);
 
     /**
      * @brief Set minimum silence duration to trigger speech end event
-     * @param durationMs Minimum duration in milliseconds
+     * @param durationMs Minimum duration in milliseconds (default: 200ms)
      */
     void setMinSilenceDuration(uint64_t durationMs);
 

@@ -3,70 +3,135 @@
 #include <cmath>
 #include <numeric>
 #include <chrono>
+#include <stdexcept>
+// Note: TensorFlow Lite includes would be added here in real implementation:
+// #include <tensorflow/lite/interpreter.h>
+// #include <tensorflow/lite/kernels/register.h>
+// #include <tensorflow/lite/model.h>
 
 namespace vad {
 
+using SpeechState = vad::SpeechState;
+
 namespace {
     // Default configuration constants
-    constexpr double kDefaultEnergyThreshold = 1000000.0;
+    constexpr float kDefaultSpeechThreshold = 0.5f;
     constexpr uint64_t kDefaultMinSpeechDurationMs = 100;
     constexpr uint64_t kDefaultMinSilenceDurationMs = 200;
-    constexpr size_t kSmoothingWindowFrames = 3;
+    constexpr uint64_t kDefaultPrerollDurationMs = 500;
+    constexpr size_t kSmoothingWindowFrames = 10; // 100ms window - better for ASR streaming
+
+    // TensorFlow Lite model requirements
+    constexpr size_t kTensorFlowLiteFrameSize = 160; // 10ms at 16kHz as required by model
 }
+
+// Mock TensorFlow Lite model class
+class MockTensorFlowLiteModel {
+public:
+    explicit MockTensorFlowLiteModel(const std::string& modelPath) {
+        // In a real implementation, this would load the TensorFlow Lite model
+        // For now, just store the path and simulate successful loading
+        mModelPath = modelPath;
+        mIsLoaded = true;
+    }
+
+    float predict(const std::vector<short>& audioFrame) {
+        // Mock implementation that returns a random-ish probability
+        // In real implementation, this would:
+        // 1. Convert audio frame to the format expected by the model
+        // 2. Run inference using TensorFlow Lite interpreter
+        // 3. Return the speech probability (0.0 to 1.0)
+
+        // Simple mock: calculate energy and map to probability
+        double energy = 0.0;
+        for (short sample : audioFrame) {
+            energy += static_cast<double>(sample) * sample;
+        }
+        energy = std::sqrt(energy / audioFrame.size());
+
+        // Map energy to probability (this is just a mockup)
+        float probability = std::min(1.0f, static_cast<float>(energy / 10000.0));
+        return probability;
+    }
+
+    bool isLoaded() const { return mIsLoaded; }
+
+private:
+    std::string mModelPath;
+    bool mIsLoaded = false;
+};
 
 class VoiceActivityDetector::Impl {
 public:
     // Configuration
     int mSampleRate;
     size_t mFrameSize;
-    double mEnergyThreshold;
+    float mSpeechThreshold;
     uint64_t mMinSpeechDurationMs;
     uint64_t mMinSilenceDurationMs;
 
     // State
     std::vector<short> mBuffer;
+    std::vector<short> mPrerollBuffer;
     bool mIsSpeechActive;
-    uint64_t mLastStateChangeTimestamp;
     uint64_t mCurrentTimestamp;
     uint64_t mSpeechStartTimestamp;
     uint64_t mSilenceStartTimestamp;
 
     // Smoothing
-    std::vector<bool> mRecentDetections;
-    size_t mDetectionIndex;
+    std::vector<float> mRecentProbabilities;
+    size_t mProbabilityIndex;
+
+    // TensorFlow Lite model
+    std::unique_ptr<MockTensorFlowLiteModel> mModel;
 
     // Callback
     SpeechEventCallback mCallback;
 
-    explicit Impl(int sampleRate, size_t frameSize)
+    explicit Impl(const std::string& modelPath, int sampleRate)
         : mSampleRate(sampleRate)
-        , mFrameSize(frameSize)
-        , mEnergyThreshold(kDefaultEnergyThreshold)
+        , mFrameSize(kTensorFlowLiteFrameSize) // Fixed frame size required by TensorFlow Lite model
+        , mSpeechThreshold(kDefaultSpeechThreshold)
         , mMinSpeechDurationMs(kDefaultMinSpeechDurationMs)
         , mMinSilenceDurationMs(kDefaultMinSilenceDurationMs)
         , mIsSpeechActive(false)
-        , mLastStateChangeTimestamp(0)
         , mCurrentTimestamp(0)
         , mSpeechStartTimestamp(0)
         , mSilenceStartTimestamp(0)
-        , mDetectionIndex(0)
+        , mProbabilityIndex(0)
     {
-        mRecentDetections.resize(kSmoothingWindowFrames, false);
+        mRecentProbabilities.resize(kSmoothingWindowFrames, 0.0f);
+
+        // Initialize TensorFlow Lite model
+        mModel = std::make_unique<MockTensorFlowLiteModel>(modelPath);
+        if (!mModel->isLoaded()) {
+            throw std::runtime_error("Failed to load TensorFlow Lite model: " + modelPath);
+        }
+
+        // Calculate preroll buffer size with fixed duration
+        size_t prerollSamples = (kDefaultPrerollDurationMs * mSampleRate) / 1000;
+        mPrerollBuffer.reserve(prerollSamples);
     }
 
-    bool processAudioBuffer(const std::vector<short>& buffer) {
-        mBuffer.insert(mBuffer.end(), buffer.begin(), buffer.end());
+    void process(std::vector<short> audiobuff) {
+        // Add new audio to buffer
+        mBuffer.insert(mBuffer.end(), audiobuff.begin(), audiobuff.end());
 
-        bool stateChanged = false;
+        // Update preroll buffer
+        updatePrerollBuffer(audiobuff);
 
         // Process complete frames
         while (mBuffer.size() >= mFrameSize) {
             std::vector<short> frame(mBuffer.begin(), mBuffer.begin() + mFrameSize);
 
-            bool frameHasSpeech = detectVoiceActivity(frame);
-            bool smoothedDetection = updateSmoothing(frameHasSpeech);
+            // Use TensorFlow Lite model to get speech probability
+            float speechProbability = mModel->predict(frame);
 
-            stateChanged = updateSpeechState(smoothedDetection) || stateChanged;
+            // Apply smoothing
+            bool smoothedDetection = updateSmoothing(speechProbability);
+
+            // Update speech state and trigger callbacks if needed
+            updateSpeechState(smoothedDetection, frame);
 
             // Remove processed frame
             mBuffer.erase(mBuffer.begin(), mBuffer.begin() + mFrameSize);
@@ -74,85 +139,80 @@ public:
             // Update timestamp (frame duration in milliseconds)
             mCurrentTimestamp += (mFrameSize * 1000) / mSampleRate;
         }
-
-        return stateChanged;
     }
 
 private:
-    bool detectVoiceActivity(const std::vector<short>& frame) {
-        // Calculate RMS energy
-        double energy = 0.0;
-        for (short sample : frame) {
-            energy += static_cast<double>(sample) * sample;
+    void updatePrerollBuffer(const std::vector<short>& audiobuff) {
+        // Add new audio to preroll buffer
+        mPrerollBuffer.insert(mPrerollBuffer.end(), audiobuff.begin(), audiobuff.end());
+
+        // Keep only the required preroll duration (fixed at 500ms)
+        size_t maxPrerollSamples = (kDefaultPrerollDurationMs * mSampleRate) / 1000;
+        if (mPrerollBuffer.size() > maxPrerollSamples) {
+            size_t excessSamples = mPrerollBuffer.size() - maxPrerollSamples;
+            mPrerollBuffer.erase(mPrerollBuffer.begin(), mPrerollBuffer.begin() + excessSamples);
         }
-        energy = std::sqrt(energy / frame.size());
-
-        return energy > mEnergyThreshold;
     }
 
-    bool updateSmoothing(bool detection) {
-        // Add current detection to smoothing window
-        mRecentDetections[mDetectionIndex] = detection;
-        mDetectionIndex = (mDetectionIndex + 1) % kSmoothingWindowFrames;
+    bool updateSmoothing(float speechProbability) {
+        // Add current probability to smoothing window
+        mRecentProbabilities[mProbabilityIndex] = speechProbability;
+        mProbabilityIndex = (mProbabilityIndex + 1) % kSmoothingWindowFrames;
 
-        // Count positive detections in window
-        size_t positiveDetections = std::count(mRecentDetections.begin(), mRecentDetections.end(), true);
+        // Calculate average probability over 100ms window (10 frames)
+        float avgProbability = std::accumulate(mRecentProbabilities.begin(), mRecentProbabilities.end(), 0.0f) / kSmoothingWindowFrames;
 
-        // Majority vote for smoothing
-        return positiveDetections > (kSmoothingWindowFrames / 2);
+        // Return true if average probability exceeds threshold
+        return avgProbability > mSpeechThreshold;
     }
 
-    bool updateSpeechState(bool detected) {
-        bool stateChanged = false;
-
+    void updateSpeechState(bool detected, const std::vector<short>& currentFrame) {
         if (!mIsSpeechActive && detected) {
             // Potential speech start
             if (mSpeechStartTimestamp == 0) {
                 mSpeechStartTimestamp = mCurrentTimestamp;
             } else if (mCurrentTimestamp - mSpeechStartTimestamp >= mMinSpeechDurationMs) {
-                // Speech confirmed after minimum duration
+                // Speech confirmed after minimum duration - trigger START
                 mIsSpeechActive = true;
-                mLastStateChangeTimestamp = mCurrentTimestamp;
                 mSilenceStartTimestamp = 0;
-                stateChanged = true;
 
                 if (mCallback) {
-                    mCallback(true, mCurrentTimestamp);
+                    // START: Provide preroll buffer for ASR initialization
+                    mCallback(SpeechState::START, mPrerollBuffer, mCurrentTimestamp);
                 }
+            }
+        } else if (mIsSpeechActive && detected) {
+            // Speech is continuing - trigger CONTINUE
+            mSilenceStartTimestamp = 0; // Reset silence tracking
+
+            if (mCallback) {
+                // CONTINUE: Provide current frame for streaming ASR
+                mCallback(SpeechState::CONTINUE, currentFrame, mCurrentTimestamp);
             }
         } else if (mIsSpeechActive && !detected) {
             // Potential speech end
             if (mSilenceStartTimestamp == 0) {
                 mSilenceStartTimestamp = mCurrentTimestamp;
             } else if (mCurrentTimestamp - mSilenceStartTimestamp >= mMinSilenceDurationMs) {
-                // Silence confirmed after minimum duration
+                // Silence confirmed after minimum duration - trigger END
                 mIsSpeechActive = false;
-                mLastStateChangeTimestamp = mCurrentTimestamp;
                 mSpeechStartTimestamp = 0;
-                stateChanged = true;
 
                 if (mCallback) {
-                    mCallback(false, mCurrentTimestamp);
+                    // END: Provide empty buffer to signal ASR finalization
+                    std::vector<short> emptyBuffer;
+                    mCallback(SpeechState::END, emptyBuffer, mCurrentTimestamp);
                 }
             }
         } else if (!detected) {
             // Reset speech start tracking if no detection
             mSpeechStartTimestamp = 0;
-        } else if (detected) {
-            // Reset silence start tracking if detection continues
-            mSilenceStartTimestamp = 0;
         }
-
-        return stateChanged;
     }
 
 public:
     bool isSpeechActive() const {
         return mIsSpeechActive;
-    }
-
-    uint64_t getLastStateChangeTimestamp() const {
-        return mLastStateChangeTimestamp;
     }
 
     void setSpeechEventCallback(const SpeechEventCallback& callback) {
@@ -161,17 +221,17 @@ public:
 
     void reset() {
         mBuffer.clear();
+        mPrerollBuffer.clear();
         mIsSpeechActive = false;
-        mLastStateChangeTimestamp = 0;
         mCurrentTimestamp = 0;
         mSpeechStartTimestamp = 0;
         mSilenceStartTimestamp = 0;
-        mDetectionIndex = 0;
-        std::fill(mRecentDetections.begin(), mRecentDetections.end(), false);
+        mProbabilityIndex = 0;
+        std::fill(mRecentProbabilities.begin(), mRecentProbabilities.end(), 0.0f);
     }
 
-    void setEnergyThreshold(double threshold) {
-        mEnergyThreshold = threshold;
+    void setSpeechThreshold(float threshold) {
+        mSpeechThreshold = std::max(0.0f, std::min(1.0f, threshold));
     }
 
     void setMinSpeechDuration(uint64_t durationMs) {
@@ -184,22 +244,18 @@ public:
 };
 
 // VoiceActivityDetector implementation
-VoiceActivityDetector::VoiceActivityDetector(int sampleRate, size_t frameSize)
-    : mImpl(std::make_unique<Impl>(sampleRate, frameSize)) {
+VoiceActivityDetector::VoiceActivityDetector(const std::string& modelPath, int sampleRate)
+    : mImpl(std::make_unique<Impl>(modelPath, sampleRate)) {
 }
 
 VoiceActivityDetector::~VoiceActivityDetector() = default;
 
-bool VoiceActivityDetector::processAudioBuffer(const std::vector<short>& buffer) {
-    return mImpl->processAudioBuffer(buffer);
+void VoiceActivityDetector::process(std::vector<short> audiobuff) {
+    mImpl->process(std::move(audiobuff));
 }
 
 bool VoiceActivityDetector::isSpeechActive() const {
     return mImpl->isSpeechActive();
-}
-
-uint64_t VoiceActivityDetector::getLastStateChangeTimestamp() const {
-    return mImpl->getLastStateChangeTimestamp();
 }
 
 void VoiceActivityDetector::setSpeechEventCallback(const SpeechEventCallback& callback) {
@@ -210,8 +266,8 @@ void VoiceActivityDetector::reset() {
     mImpl->reset();
 }
 
-void VoiceActivityDetector::setEnergyThreshold(double threshold) {
-    mImpl->setEnergyThreshold(threshold);
+void VoiceActivityDetector::setSpeechThreshold(float threshold) {
+    mImpl->setSpeechThreshold(threshold);
 }
 
 void VoiceActivityDetector::setMinSpeechDuration(uint64_t durationMs) {
@@ -221,5 +277,7 @@ void VoiceActivityDetector::setMinSpeechDuration(uint64_t durationMs) {
 void VoiceActivityDetector::setMinSilenceDuration(uint64_t durationMs) {
     mImpl->setMinSilenceDuration(durationMs);
 }
+
+
 
 } // namespace vad
