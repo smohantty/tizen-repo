@@ -147,15 +147,20 @@ public:
 
 private:
     void updatePrerollBuffer(const std::vector<short>& audiobuff) {
-        // Add new audio to preroll buffer
-        mPrerollBuffer.insert(mPrerollBuffer.end(), audiobuff.begin(), audiobuff.end());
+        // Only accumulate preroll buffer when not in active speech session
+        // This prevents contamination from previous speech sessions
+        if (!mIsSpeechActive) {
+            // Add new audio to preroll buffer
+            mPrerollBuffer.insert(mPrerollBuffer.end(), audiobuff.begin(), audiobuff.end());
 
-        // Keep only the required preroll duration (now optimized to 250ms)
-        size_t maxPrerollSamples = (kDefaultPrerollDurationMs * mSampleRate) / 1000;
-        if (mPrerollBuffer.size() > maxPrerollSamples) {
-            size_t excessSamples = mPrerollBuffer.size() - maxPrerollSamples;
-            mPrerollBuffer.erase(mPrerollBuffer.begin(), mPrerollBuffer.begin() + excessSamples);
+            // Keep only the required preroll duration (now optimized to 250ms)
+            size_t maxPrerollSamples = (kDefaultPrerollDurationMs * mSampleRate) / 1000;
+            if (mPrerollBuffer.size() > maxPrerollSamples) {
+                size_t excessSamples = mPrerollBuffer.size() - maxPrerollSamples;
+                mPrerollBuffer.erase(mPrerollBuffer.begin(), mPrerollBuffer.begin() + excessSamples);
+            }
         }
+        // During active speech, preroll buffer remains empty (was cleared after START callback)
     }
 
     bool updateSmoothing(float speechProbability) {
@@ -198,6 +203,8 @@ private:
                 if (mCallback) {
                     // START: Provide preroll buffer for ASR initialization
                     mCallback(SpeechState::START, mPrerollBuffer, mCurrentTimestamp);
+                    // Clear preroll buffer after providing it to ASR - no longer needed during active speech
+                    mPrerollBuffer.clear();
                 }
             }
         } else if (mIsSpeechActive && detected) {
