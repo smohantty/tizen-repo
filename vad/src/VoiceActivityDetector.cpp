@@ -14,6 +14,7 @@ namespace {
     constexpr float kDefaultSpeechThreshold = 0.25f;        // More sensitive for better speech onset detection
     constexpr uint64_t kDefaultMinSpeechDurationMs = 50;    // Faster response, captures short words
     constexpr uint64_t kDefaultMinSilenceDurationMs = 400;  // Allow natural pauses without cutting speech
+    constexpr uint64_t kDefaultConversationTimeoutMs = 2000; // Time after last speech end to trigger conversation end
     constexpr uint64_t kDefaultPrerollDurationMs = 250;    // Reduced memory usage, still captures speech onset
     constexpr size_t kSmoothingWindowFrames = 5;           // 50ms window - more responsive
     constexpr float kExponentialSmoothingAlpha = 0.35f;    // More responsive exponential averaging
@@ -66,14 +67,17 @@ public:
     float mSpeechThreshold;
     uint64_t mMinSpeechDurationMs;
     uint64_t mMinSilenceDurationMs;
+    uint64_t mConversationTimeoutMs;
 
     // State
     std::vector<short> mBuffer;
     std::vector<short> mPrerollBuffer;
     bool mIsSpeechActive;
+    bool mConversationActive;
     uint64_t mCurrentTimestamp;
     uint64_t mSpeechStartTimestamp;
     uint64_t mSilenceStartTimestamp;
+    uint64_t mLastSpeechEndTimestamp;
 
     // Smoothing
     std::vector<float> mRecentProbabilities;
@@ -95,10 +99,13 @@ public:
         , mSpeechThreshold(kDefaultSpeechThreshold)
         , mMinSpeechDurationMs(kDefaultMinSpeechDurationMs)
         , mMinSilenceDurationMs(kDefaultMinSilenceDurationMs)
+        , mConversationTimeoutMs(kDefaultConversationTimeoutMs)
         , mIsSpeechActive(false)
+        , mConversationActive(false)
         , mCurrentTimestamp(0)
         , mSpeechStartTimestamp(0)
         , mSilenceStartTimestamp(0)
+        , mLastSpeechEndTimestamp(0)
         , mProbabilityIndex(0)
         , mExponentialAverage(0.0f)
         , mExponentialAverageInitialized(false)
@@ -198,6 +205,7 @@ private:
             } else if (mCurrentTimestamp - mSpeechStartTimestamp >= mMinSpeechDurationMs) {
                 // Speech confirmed after minimum duration - trigger START
                 mIsSpeechActive = true;
+                mConversationActive = true; // Mark conversation as active
                 mSilenceStartTimestamp = 0;
 
                 if (mCallback) {
@@ -223,6 +231,7 @@ private:
                 // Silence confirmed after minimum duration - trigger END
                 mIsSpeechActive = false;
                 mSpeechStartTimestamp = 0;
+                mLastSpeechEndTimestamp = mCurrentTimestamp; // Record when speech ended
 
                 if (mCallback) {
                     // END: Provide empty buffer to signal ASR finalization
@@ -233,6 +242,22 @@ private:
         } else if (!detected) {
             // Reset speech start tracking if no detection
             mSpeechStartTimestamp = 0;
+
+            // Check for conversation end only if conversation is active and we have a last speech end timestamp
+            if (mConversationActive && mLastSpeechEndTimestamp > 0) {
+                uint64_t silenceDuration = mCurrentTimestamp - mLastSpeechEndTimestamp;
+                if (silenceDuration >= mConversationTimeoutMs) {
+                    // Conversation timeout reached - trigger CONVERSATION_END
+                    mConversationActive = false;
+                    mLastSpeechEndTimestamp = 0;
+
+                    if (mCallback) {
+                        // CONVERSATION_END: Provide empty buffer to signal conversation finalization
+                        std::vector<short> emptyBuffer;
+                        mCallback(SpeechState::CONVERSATION_END, emptyBuffer, mCurrentTimestamp);
+                    }
+                }
+            }
         }
     }
 
@@ -249,9 +274,11 @@ public:
         mBuffer.clear();
         mPrerollBuffer.clear();
         mIsSpeechActive = false;
+        mConversationActive = false;
         mCurrentTimestamp = 0;
         mSpeechStartTimestamp = 0;
         mSilenceStartTimestamp = 0;
+        mLastSpeechEndTimestamp = 0;
         mProbabilityIndex = 0;
         std::fill(mRecentProbabilities.begin(), mRecentProbabilities.end(), 0.0f);
         mExponentialAverage = 0.0f;
@@ -268,6 +295,10 @@ public:
 
     void setMinSilenceDuration(uint64_t durationMs) {
         mMinSilenceDurationMs = durationMs;
+    }
+
+    void setConversationTimeout(uint64_t durationMs) {
+        mConversationTimeoutMs = durationMs;
     }
 };
 
@@ -304,6 +335,10 @@ void VoiceActivityDetector::setMinSpeechDuration(uint64_t durationMs) {
 
 void VoiceActivityDetector::setMinSilenceDuration(uint64_t durationMs) {
     mImpl->setMinSilenceDuration(durationMs);
+}
+
+void VoiceActivityDetector::setConversationTimeout(uint64_t durationMs) {
+    mImpl->setConversationTimeout(durationMs);
 }
 
 

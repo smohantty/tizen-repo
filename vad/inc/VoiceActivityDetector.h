@@ -9,9 +9,10 @@ namespace vad {
  * @brief Speech state enumeration for streaming ASR
  */
 enum class SpeechState {
-    START,      ///< Speech has just started - initialize ASR
-    CONTINUE,   ///< Speech is ongoing - continue feeding ASR
-    END         ///< Speech has ended - finalize ASR
+    START,           ///< Speech has just started - initialize ASR
+    CONTINUE,        ///< Speech is ongoing - continue feeding ASR
+    END,             ///< Speech has ended - finalize ASR
+    CONVERSATION_END ///< Entire conversation has ended after prolonged silence
 };
 
 /**
@@ -24,8 +25,8 @@ class VoiceActivityDetector {
 public:
     /**
      * @brief Callback function type for speech events
-     * @param speechState current speech state (START, CONTINUE, END)
-     * @param audioBuffer audio buffer - preroll buffer for START, current buffer for CONTINUE, empty for END
+     * @param speechState current speech state (START, CONTINUE, END, CONVERSATION_END)
+     * @param audioBuffer audio buffer - preroll buffer for START, current buffer for CONTINUE, empty for END and CONVERSATION_END
      * @param timestamp relative timestamp in milliseconds from start of processing
      */
     using SpeechEventCallback = std::function<void(SpeechState speechState, const std::vector<short>& audioBuffer, uint64_t timestamp)>;
@@ -83,6 +84,12 @@ public:
      * @param durationMs Minimum duration in milliseconds (default: 200ms)
      */
     void setMinSilenceDuration(uint64_t durationMs);
+
+    /**
+     * @brief Set conversation timeout duration to trigger conversation end event
+     * @param durationMs Duration in milliseconds after last speech end to trigger conversation end (default: 2000ms)
+     */
+    void setConversationTimeout(uint64_t durationMs);
 
 private:
     class Impl;
