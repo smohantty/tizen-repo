@@ -4,8 +4,497 @@
 #include <regex>
 #include <random>
 #include <iomanip>
+#include <unordered_map>
 
 namespace aichat {
+
+// Type aliases for cleaner code
+using Config = AiChatClient::Config;
+using Language = AiChatClient::Language;
+using BackendCallback = AiChatClient::BackendCallback;
+using ResponseCallback = AiChatClient::ResponseCallback;
+using ErrorCallback = AiChatClient::ErrorCallback;
+
+// =============================================================================
+// Forward Declarations for Implementation Classes
+// =============================================================================
+
+class BackendTriggerBase {
+public:
+    explicit BackendTriggerBase(const Config& config)
+        : mConfig(config)
+        , mLastActivity(std::chrono::steady_clock::now())
+    {
+    }
+
+    virtual ~BackendTriggerBase() = default;
+
+    virtual bool shouldTrigger(const std::string& sentence) const = 0;
+
+    virtual bool shouldTriggerOnTimeout() const {
+        return isTimeoutReached();
+    }
+
+    virtual void updateLastActivity() {
+        mLastActivity = std::chrono::steady_clock::now();
+    }
+
+    virtual void reset() {
+        mLastActivity = std::chrono::steady_clock::now();
+    }
+
+protected:
+    Config mConfig;
+    std::chrono::steady_clock::time_point mLastActivity;
+
+    virtual bool hasPunctuation(const std::string& sentence) const = 0;
+    virtual bool hasQuestionPattern(const std::string& sentence) const = 0;
+
+    bool isTimeoutReached() const {
+        auto now = std::chrono::steady_clock::now();
+        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - mLastActivity);
+        return elapsed.count() >= static_cast<long>(mConfig.mTriggerTimeoutMs);
+    }
+};
+
+class EnglishBackendTrigger : public BackendTriggerBase {
+public:
+    explicit EnglishBackendTrigger(const Config& config)
+        : BackendTriggerBase(config)
+    {
+    }
+
+    bool shouldTrigger(const std::string& sentence) const override {
+        if (sentence.empty()) {
+            return false;
+        }
+        return hasPunctuation(sentence) || hasQuestionPattern(sentence);
+    }
+
+protected:
+    bool hasPunctuation(const std::string& sentence) const override {
+        return sentence.find_last_of(".!?") != std::string::npos;
+    }
+
+    bool hasQuestionPattern(const std::string& sentence) const override {
+        // Convert to lowercase for case-insensitive matching
+        std::string lowerSentence = sentence;
+        std::transform(lowerSentence.begin(), lowerSentence.end(), lowerSentence.begin(), ::tolower);
+
+        // English question patterns
+        std::vector<std::string> questionWords = {
+            "what", "how", "when", "where", "why", "who", "which", "whose",
+            "can you", "could you", "would you", "will you", "should",
+            "do you", "did you", "are you", "is it", "have you"
+        };
+
+        for (const auto& word : questionWords) {
+            if (lowerSentence.find(word) != std::string::npos) {
+                return true;
+            }
+        }
+        return false;
+    }
+};
+
+class KoreanBackendTrigger : public BackendTriggerBase {
+public:
+    explicit KoreanBackendTrigger(const Config& config)
+        : BackendTriggerBase(config)
+    {
+    }
+
+    bool shouldTrigger(const std::string& sentence) const override {
+        if (sentence.empty()) {
+            return false;
+        }
+        return hasPunctuation(sentence) || hasQuestionPattern(sentence);
+    }
+
+protected:
+    bool hasPunctuation(const std::string& sentence) const override {
+        // Korean punctuation marks
+        std::vector<std::string> koreanPunct = {".", "!", "?", "。", "！", "？"};
+
+        for (const auto& punct : koreanPunct) {
+            if (sentence.find(punct) != std::string::npos) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    bool hasQuestionPattern(const std::string& sentence) const override {
+        // Korean question patterns
+        std::vector<std::string> questionPatterns = {
+            "뭐", "무엇", "어떻", "어디", "언제", "왜", "누구", "몇",
+            "까요", "습니까", "나요", "죠", "지요",
+            "할까", "어떨까", "괜찮", "어때"
+        };
+
+        for (const auto& pattern : questionPatterns) {
+            if (sentence.find(pattern) != std::string::npos) {
+                return true;
+            }
+        }
+
+        // Check for question ending patterns
+        if (sentence.find("요?") != std::string::npos ||
+            sentence.find("까?") != std::string::npos ||
+            sentence.find("나?") != std::string::npos) {
+            return true;
+        }
+
+        return false;
+    }
+};
+
+class ResponseManager {
+public:
+    explicit ResponseManager(uint32_t maxConcurrentCalls)
+    {
+        // Note: maxConcurrentCalls parameter kept for API compatibility
+        // but not currently used in implementation
+        (void)maxConcurrentCalls;  // Suppress unused parameter warning
+    }
+
+    void addPendingRequest(const std::string& requestId, const std::string& conversation) {
+        invalidateOldRequests();
+        RequestInfo request;
+        request.conversation = conversation;
+        request.timestamp = std::chrono::steady_clock::now();
+        request.isComplete = false;
+        mRequests[requestId] = request;
+    }
+
+    void handleResponse(const std::string& requestId, const std::string& response) {
+        auto it = mRequests.find(requestId);
+        if (it != mRequests.end()) {
+            it->second.response = response;
+            it->second.isComplete = true;
+        }
+    }
+
+    void invalidateOldRequests() {
+        auto it = mRequests.begin();
+        while (it != mRequests.end()) {
+            if (isRequestExpired(it->second)) {
+                it = mRequests.erase(it);
+            } else {
+                ++it;
+            }
+        }
+    }
+
+    bool hasCachedResponse() const {
+        for (const auto& pair : mRequests) {
+            if (pair.second.isComplete && !pair.second.response.empty()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    std::string getMergedResponse() const {
+        std::string mergedResponse;
+        for (const auto& pair : mRequests) {
+            if (pair.second.isComplete && !pair.second.response.empty()) {
+                if (!mergedResponse.empty()) {
+                    mergedResponse += " ";
+                }
+                mergedResponse += pair.second.response;
+            }
+        }
+        return mergedResponse;
+    }
+
+    void clear() {
+        mRequests.clear();
+    }
+
+    size_t getPendingCount() const {
+        size_t count = 0;
+        for (const auto& pair : mRequests) {
+            if (!pair.second.isComplete) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    bool hasPendingConversation(const std::string& conversation) const {
+        for (const auto& pair : mRequests) {
+            if (pair.second.conversation == conversation && !pair.second.isComplete) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+private:
+    struct RequestInfo {
+        std::string conversation;
+        std::string response;
+        std::chrono::steady_clock::time_point timestamp;
+        bool isComplete;
+    };
+
+    std::unordered_map<std::string, RequestInfo> mRequests;
+
+    bool isRequestExpired(const RequestInfo& request) const {
+        auto now = std::chrono::steady_clock::now();
+        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - request.timestamp);
+        return elapsed.count() >= REQUEST_TIMEOUT_MS;
+    }
+
+    static const uint32_t REQUEST_TIMEOUT_MS = 10000; // 10 seconds
+};
+
+class ConversationState {
+public:
+    enum class State {
+        Idle,
+        Accumulating,
+        Processing,
+        WaitingForEnd,
+        Completed
+    };
+
+    ConversationState()
+        : mCurrentState(State::Idle)
+    {
+    }
+
+    void setState(State state) {
+        mCurrentState = state;
+    }
+
+    State getState() const {
+        return mCurrentState;
+    }
+
+    void markConversationStart() {
+        setState(State::Accumulating);
+    }
+
+    void markConversationEnd() {
+        // Nothing to do - just marking the end for state management
+    }
+
+    void markProcessingStart() {
+        if (mCurrentState == State::Accumulating) {
+            setState(State::Processing);
+        }
+    }
+
+    void markProcessingComplete() {
+        setState(State::Completed);
+    }
+
+    bool isProcessing() const {
+        return mCurrentState == State::Processing || mCurrentState == State::WaitingForEnd;
+    }
+
+    bool canAcceptSentences() const {
+        return mCurrentState == State::Idle ||
+               mCurrentState == State::Accumulating ||
+               mCurrentState == State::Processing;
+    }
+
+    void reset() {
+        mCurrentState = State::Idle;
+    }
+
+private:
+    State mCurrentState;
+};
+
+// =============================================================================
+// AiChatClient::Impl - Implementation Class (PIMPL)
+// =============================================================================
+
+class AiChatClient::Impl {
+public:
+    explicit Impl(const Config& config)
+        : mResponseManager(std::make_unique<ResponseManager>(config.mMaxConcurrentCalls))
+        , mState(std::make_unique<ConversationState>())
+        , mConfig(config)
+        , mSentencesSinceLastBackendCall(0)
+    {
+        createTriggerForLanguage(config.mLanguage);
+    }
+
+    ~Impl() = default;
+
+    // Core components
+    std::string mConversation;
+    std::unique_ptr<BackendTriggerBase> mTrigger;
+    std::unique_ptr<ResponseManager> mResponseManager;
+    std::unique_ptr<ConversationState> mState;
+
+    // Configuration and callbacks
+    Config mConfig;
+    BackendCallback mBackendCallback;
+    ResponseCallback mResponseCallback;
+    ErrorCallback mErrorCallback;
+
+    // Chunking state tracking
+    size_t mSentencesSinceLastBackendCall;
+
+    // Internal methods
+    void handleTriggerEvent(const std::string& conversation, const std::string& triggerId) {
+        if (!mBackendCallback) {
+            handleError("Backend callback not set");
+            return;
+        }
+
+        // Add to pending requests
+        mResponseManager->addPendingRequest(triggerId, conversation);
+        mState->markProcessingStart();
+
+        // Create response handler
+        auto responseHandler = [this, triggerId](const std::string& response) {
+            handleBackendResponse(response, triggerId);
+        };
+
+        // Create error handler
+        auto errorHandler = [this](const std::string& error) {
+            handleError(error);
+        };
+
+        // Call backend API
+        try {
+            mBackendCallback(conversation, responseHandler);
+        } catch (const std::exception& e) {
+            errorHandler("Backend callback failed: " + std::string(e.what()));
+        }
+    }
+
+    void handleBackendResponse(const std::string& response, const std::string& requestId) {
+        mResponseManager->handleResponse(requestId, response);
+
+        if (mResponseCallback) {
+            mResponseCallback(response);
+        }
+
+        mState->markProcessingComplete();
+    }
+
+    void handleError(const std::string& error) {
+        if (mErrorCallback) {
+            mErrorCallback(error);
+        }
+    }
+
+    void sendFinalResponse() {
+        if (mResponseManager->hasCachedResponse()) {
+            std::string response = mResponseManager->getMergedResponse();
+            if (mResponseCallback && !response.empty()) {
+                mResponseCallback(response);
+            }
+        } else {
+            // No response available
+            if (mResponseCallback) {
+                mResponseCallback("No response available");
+            }
+        }
+
+        // Mark conversation as completed
+        mState->markProcessingComplete();
+
+        // Clean up old responses
+        mResponseManager->clear();
+    }
+
+    bool shouldTriggerBackendCall(const std::string& sentence) const {
+        return mTrigger->shouldTrigger(sentence) || mTrigger->shouldTriggerOnTimeout();
+    }
+
+    std::string generateRequestId() const {
+        static std::random_device rd;
+        static std::mt19937 gen(rd());
+        static std::uniform_int_distribution<> dis(0, 15);
+
+        std::stringstream ss;
+        ss << std::hex;
+        for (int i = 0; i < 8; i++) {
+            ss << dis(gen);
+        }
+        return ss.str();
+    }
+
+    void createTriggerForLanguage(Language language) {
+        switch (language) {
+            case Language::English:
+                mTrigger = std::make_unique<EnglishBackendTrigger>(mConfig);
+                break;
+            case Language::Korean:
+                mTrigger = std::make_unique<KoreanBackendTrigger>(mConfig);
+                break;
+            case Language::Auto:
+            default:
+                // Start with English trigger as default
+                mTrigger = std::make_unique<EnglishBackendTrigger>(mConfig);
+                break;
+        }
+    }
+
+    Language detectLanguage(const std::string& sentence) const {
+        // Simple heuristic: check for Korean characters (Hangul)
+        for (const char* ptr = sentence.c_str(); *ptr != '\0';) {
+            unsigned char c = static_cast<unsigned char>(*ptr);
+
+            // Check for UTF-8 Korean characters (Hangul range: 0xAC00-0xD7AF)
+            if (c >= 0xE0 && c <= 0xEF) {  // 3-byte UTF-8 sequence
+                if (ptr[1] && ptr[2]) {
+                    uint32_t codepoint = ((c & 0x0F) << 12) |
+                                       ((static_cast<unsigned char>(ptr[1]) & 0x3F) << 6) |
+                                       (static_cast<unsigned char>(ptr[2]) & 0x3F);
+
+                    // Korean Hangul syllables range
+                    if (codepoint >= 0xAC00 && codepoint <= 0xD7AF) {
+                        return Language::Korean;
+                    }
+                    ptr += 3;
+                } else {
+                    ptr++;
+                }
+            } else if (c >= 0x80) {
+                // Skip other multi-byte sequences
+                if (c >= 0xF0) ptr += 4;
+                else if (c >= 0xE0) ptr += 3;
+                else if (c >= 0xC0) ptr += 2;
+                else ptr++;
+            } else {
+                ptr++;
+            }
+        }
+
+        return Language::English;  // Default to English if no Korean detected
+    }
+
+    // Conversation management helpers
+    void addSentenceToConversation(const std::string& sentence) {
+        if (!sentence.empty()) {
+            if (!mConversation.empty()) {
+                mConversation += " ";
+            }
+            mConversation += sentence;
+        }
+    }
+
+    const std::string& getFullConversation() const {
+        return mConversation;
+    }
+
+    void clearConversation() {
+        mConversation.clear();
+    }
+
+    bool isConversationEmpty() const {
+        return mConversation.empty();
+    }
+};
 
 // =============================================================================
 // AiChatClient Implementation
@@ -17,43 +506,39 @@ AiChatClient::AiChatClient()
 }
 
 AiChatClient::AiChatClient(const Config& config)
-    : mResponseManager(std::make_unique<ResponseManager>(config.mMaxConcurrentCalls))
-    , mState(std::make_unique<ConversationState>())
-    , mConfig(config)
-    , mSentencesSinceLastBackendCall(0)
+    : mPImpl(std::make_unique<Impl>(config))
 {
-    createTriggerForLanguage(config.mLanguage);
 }
 
 AiChatClient::~AiChatClient() = default;
 
 void AiChatClient::streamSentence(const std::string& sentence) {
-    if (sentence.empty() || !mState->canAcceptSentences()) {
+    if (sentence.empty() || !mPImpl->mState->canAcceptSentences()) {
         return;
     }
 
     // Auto-detect language and switch trigger if needed
-    if (mConfig.mLanguage == Language::Auto) {
-        Language detectedLang = detectLanguage(sentence);
+    if (mPImpl->mConfig.mLanguage == Language::Auto) {
+        Language detectedLang = mPImpl->detectLanguage(sentence);
 
         // Switch trigger if detected language doesn't match current trigger
         if ((detectedLang == Language::Korean &&
-             dynamic_cast<KoreanBackendTrigger*>(mTrigger.get()) == nullptr) ||
+             dynamic_cast<KoreanBackendTrigger*>(mPImpl->mTrigger.get()) == nullptr) ||
             (detectedLang == Language::English &&
-             dynamic_cast<EnglishBackendTrigger*>(mTrigger.get()) == nullptr)) {
-            createTriggerForLanguage(detectedLang);
+             dynamic_cast<EnglishBackendTrigger*>(mPImpl->mTrigger.get()) == nullptr)) {
+            mPImpl->createTriggerForLanguage(detectedLang);
         }
     }
 
     // Add sentence to conversation
-    addSentenceToConversation(sentence);
-    mSentencesSinceLastBackendCall++;
-    mTrigger->updateLastActivity();
+    mPImpl->addSentenceToConversation(sentence);
+    mPImpl->mSentencesSinceLastBackendCall++;
+    mPImpl->mTrigger->updateLastActivity();
 
     // Update state if this is the first sentence
-    if (mState->getState() == ConversationState::State::Idle) {
-        mState->markConversationStart();
-        mState->setState(ConversationState::State::Accumulating);
+    if (mPImpl->mState->getState() == ConversationState::State::Idle) {
+        mPImpl->mState->markConversationStart();
+        mPImpl->mState->setState(ConversationState::State::Accumulating);
     }
 
     // Determine if we should trigger a backend call and what to send
@@ -61,23 +546,23 @@ void AiChatClient::streamSentence(const std::string& sentence) {
     std::string conversationToSend;
 
     // Priority 1: Smart triggers (send full conversation)
-    if (mConfig.mEnableSmartTriggers) {
-        const std::string& fullConversation = getFullConversation();
+    if (mPImpl->mConfig.mEnableSmartTriggers) {
+        const std::string& fullConversation = mPImpl->getFullConversation();
         // Check if the FULL conversation (not just current sentence) meets trigger criteria
-        if (mTrigger->shouldTrigger(fullConversation) || mTrigger->shouldTriggerOnTimeout()) {
+        if (mPImpl->mTrigger->shouldTrigger(fullConversation) || mPImpl->mTrigger->shouldTriggerOnTimeout()) {
             // Only trigger if we don't already have a pending request for this conversation
-            if (!mResponseManager->hasPendingConversation(fullConversation)) {
+            if (!mPImpl->mResponseManager->hasPendingConversation(fullConversation)) {
                 conversationToSend = fullConversation;
                 shouldCallBackend = true;
             }
         }
     }
     // Priority 2: Chunking (only if smart triggers didn't fire)
-    else if (mConfig.mEnableChunking && mSentencesSinceLastBackendCall >= mConfig.mChunkSize) {
-        if (mTrigger->shouldTrigger(sentence)) {
-            const std::string& fullConversation = getFullConversation();
+    else if (mPImpl->mConfig.mEnableChunking && mPImpl->mSentencesSinceLastBackendCall >= mPImpl->mConfig.mChunkSize) {
+        if (mPImpl->mTrigger->shouldTrigger(sentence)) {
+            const std::string& fullConversation = mPImpl->getFullConversation();
             // Only trigger if we don't already have a pending request for this conversation
-            if (!mResponseManager->hasPendingConversation(fullConversation)) {
+            if (!mPImpl->mResponseManager->hasPendingConversation(fullConversation)) {
                 conversationToSend = fullConversation;
                 shouldCallBackend = true;
             }
@@ -86,539 +571,72 @@ void AiChatClient::streamSentence(const std::string& sentence) {
 
     // Make the backend call if needed
     if (shouldCallBackend) {
-        std::string requestId = generateRequestId();
-        handleTriggerEvent(conversationToSend, requestId);
+        std::string requestId = mPImpl->generateRequestId();
+        mPImpl->handleTriggerEvent(conversationToSend, requestId);
         // Reset counter since we just made a backend call
-        mSentencesSinceLastBackendCall = 0;
+        mPImpl->mSentencesSinceLastBackendCall = 0;
     }
 }
 
 void AiChatClient::endConversation() {
-    if (mState->getState() == ConversationState::State::Idle) {
+    if (mPImpl->mState->getState() == ConversationState::State::Idle) {
         return;
     }
 
-    mState->markConversationEnd();
-    mState->setState(ConversationState::State::WaitingForEnd);
+    mPImpl->mState->markConversationEnd();
+    mPImpl->mState->setState(ConversationState::State::WaitingForEnd);
 
     // Check if we already have a cached response
-    if (mResponseManager->hasCachedResponse()) {
-        sendFinalResponse();
+    if (mPImpl->mResponseManager->hasCachedResponse()) {
+        mPImpl->sendFinalResponse();
         return;
     }
 
     // Send final conversation if no cached response available
-    if (!isConversationEmpty()) {
-        const std::string& conversation = getFullConversation();
+    if (!mPImpl->isConversationEmpty()) {
+        const std::string& conversation = mPImpl->getFullConversation();
         // Only send if we don't already have a pending request for this conversation
-        if (!mResponseManager->hasPendingConversation(conversation)) {
-            std::string requestId = generateRequestId();
-            handleTriggerEvent(conversation, requestId);
+        if (!mPImpl->mResponseManager->hasPendingConversation(conversation)) {
+            std::string requestId = mPImpl->generateRequestId();
+            mPImpl->handleTriggerEvent(conversation, requestId);
             // Reset counter since we just made a backend call
-            mSentencesSinceLastBackendCall = 0;
+            mPImpl->mSentencesSinceLastBackendCall = 0;
         }
     }
 
     // Wait for response or timeout
-    sendFinalResponse();
+    mPImpl->sendFinalResponse();
 }
 
 void AiChatClient::setBackendCallback(BackendCallback callback) {
-    mBackendCallback = std::move(callback);
+    mPImpl->mBackendCallback = std::move(callback);
 }
 
 void AiChatClient::setResponseCallback(ResponseCallback callback) {
-    mResponseCallback = std::move(callback);
+    mPImpl->mResponseCallback = std::move(callback);
 }
 
 void AiChatClient::setErrorCallback(ErrorCallback callback) {
-    mErrorCallback = std::move(callback);
+    mPImpl->mErrorCallback = std::move(callback);
 }
 
 bool AiChatClient::isProcessing() const {
-    return mState->isProcessing() || mResponseManager->getPendingCount() > 0;
+    return mPImpl->mState->isProcessing() || mPImpl->mResponseManager->getPendingCount() > 0;
 }
 
 void AiChatClient::reset() {
-    clearConversation();
-    mTrigger->reset();
-    mResponseManager->clear();
-    mState->reset();
-    mSentencesSinceLastBackendCall = 0;
+    mPImpl->clearConversation();
+    mPImpl->mTrigger->reset();
+    mPImpl->mResponseManager->clear();
+    mPImpl->mState->reset();
+    mPImpl->mSentencesSinceLastBackendCall = 0;
 }
 
 void AiChatClient::updateConfig(const Config& config) {
-    mConfig = config;
+    mPImpl->mConfig = config;
     // Recreate components with new config
-    createTriggerForLanguage(config.mLanguage);
-    mResponseManager = std::make_unique<ResponseManager>(config.mMaxConcurrentCalls);
-}
-
-void AiChatClient::handleTriggerEvent(const std::string& conversation, const std::string& triggerId) {
-    if (!mBackendCallback) {
-        handleError("Backend callback not set");
-        return;
-    }
-
-    // Add to pending requests
-    mResponseManager->addPendingRequest(triggerId, conversation);
-    mState->markProcessingStart();
-
-    // Create response handler
-    auto responseHandler = [this, triggerId](const std::string& response) {
-        handleBackendResponse(response, triggerId);
-    };
-
-    // Call backend
-    try {
-        mBackendCallback(conversation, responseHandler);
-    } catch (const std::exception& e) {
-        handleError("Backend call failed: " + std::string(e.what()));
-    }
-}
-
-void AiChatClient::handleBackendResponse(const std::string& response, const std::string& requestId) {
-    mResponseManager->handleResponse(requestId, response);
-
-    // If we're waiting for end conversation, check if we can send final response
-    if (mState->getState() == ConversationState::State::WaitingForEnd) {
-        sendFinalResponse();
-    }
-}
-
-void AiChatClient::handleError(const std::string& error) {
-    if (mErrorCallback) {
-        mErrorCallback(error);
-    }
-}
-
-void AiChatClient::sendFinalResponse() {
-    if (!mResponseCallback) {
-        return;
-    }
-
-    std::string finalResponse;
-
-    if (mResponseManager->hasCachedResponse()) {
-        finalResponse = mResponseManager->getMergedResponse();
-    } else {
-        finalResponse = "No response available";
-    }
-
-    mResponseCallback(finalResponse);
-    mState->markProcessingComplete();
-    mState->setState(ConversationState::State::Completed);
-}
-
-bool AiChatClient::shouldTriggerBackendCall(const std::string& sentence) const {
-    return mTrigger->shouldTrigger(sentence) || mTrigger->shouldTriggerOnTimeout();
-}
-
-std::string AiChatClient::generateRequestId() const {
-    static std::random_device rd;
-    static std::mt19937 gen(rd());
-    static std::uniform_int_distribution<> dis(1000, 9999);
-
-    auto timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(
-        std::chrono::steady_clock::now().time_since_epoch()).count();
-
-    return "req_" + std::to_string(timestamp) + "_" + std::to_string(dis(gen));
-}
-
-void AiChatClient::createTriggerForLanguage(Language language) {
-    switch (language) {
-        case Language::English:
-            mTrigger = std::make_unique<EnglishBackendTrigger>(mConfig);
-            break;
-        case Language::Korean:
-            mTrigger = std::make_unique<KoreanBackendTrigger>(mConfig);
-            break;
-        case Language::Auto:
-            // Default to English, will switch dynamically based on content
-            mTrigger = std::make_unique<EnglishBackendTrigger>(mConfig);
-            break;
-    }
-}
-
-AiChatClient::Language AiChatClient::detectLanguage(const std::string& sentence) const {
-    // Simple heuristic: check for Korean characters (Hangul)
-    for (const char* ptr = sentence.c_str(); *ptr != '\0';) {
-        unsigned char c = static_cast<unsigned char>(*ptr);
-
-        // Check for UTF-8 Korean characters (Hangul range: 0xAC00-0xD7AF)
-        if (c >= 0xE0 && c <= 0xEF) {  // 3-byte UTF-8 sequence
-            if (ptr[1] && ptr[2]) {
-                uint32_t codepoint = ((c & 0x0F) << 12) |
-                                   ((static_cast<unsigned char>(ptr[1]) & 0x3F) << 6) |
-                                   (static_cast<unsigned char>(ptr[2]) & 0x3F);
-
-                // Korean Hangul syllables range
-                if (codepoint >= 0xAC00 && codepoint <= 0xD7AF) {
-                    return Language::Korean;
-                }
-                ptr += 3;
-            } else {
-                ptr++;
-            }
-        } else if (c >= 0x80) {
-            // Skip other multi-byte sequences
-            if (c >= 0xF0) ptr += 4;
-            else if (c >= 0xE0) ptr += 3;
-            else if (c >= 0xC0) ptr += 2;
-            else ptr++;
-        } else {
-            ptr++;
-        }
-    }
-
-    return Language::English;  // Default to English if no Korean detected
-}
-
-// =============================================================================
-// Conversation Management Methods
-// =============================================================================
-
-void AiChatClient::addSentenceToConversation(const std::string& sentence) {
-    if (!sentence.empty()) {
-        if (!mConversation.empty()) {
-            mConversation += " ";
-        }
-        mConversation += sentence;
-    }
-}
-
-const std::string& AiChatClient::getFullConversation() const {
-    return mConversation;
-}
-
-void AiChatClient::clearConversation() {
-    mConversation.clear();
-}
-
-bool AiChatClient::isConversationEmpty() const {
-    return mConversation.empty();
-}
-
-// =============================================================================
-// BackendTriggerBase Implementation
-// =============================================================================
-
-AiChatClient::BackendTriggerBase::BackendTriggerBase(const Config& config)
-    : mConfig(config)
-    , mLastActivity(std::chrono::steady_clock::now())
-{
-}
-
-bool AiChatClient::BackendTriggerBase::shouldTriggerOnTimeout() const {
-    return isTimeoutReached();
-}
-
-void AiChatClient::BackendTriggerBase::updateLastActivity() {
-    mLastActivity = std::chrono::steady_clock::now();
-}
-
-void AiChatClient::BackendTriggerBase::reset() {
-    mLastActivity = std::chrono::steady_clock::now();
-}
-
-bool AiChatClient::BackendTriggerBase::isTimeoutReached() const {
-    auto now = std::chrono::steady_clock::now();
-    auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - mLastActivity);
-    return elapsed.count() >= static_cast<long>(mConfig.mTriggerTimeoutMs);
-}
-
-// =============================================================================
-// EnglishBackendTrigger Implementation
-// =============================================================================
-
-AiChatClient::EnglishBackendTrigger::EnglishBackendTrigger(const Config& config)
-    : BackendTriggerBase(config)
-{
-}
-
-bool AiChatClient::EnglishBackendTrigger::shouldTrigger(const std::string& sentence) const {
-    if (!mConfig.mEnableSmartTriggers) {
-        return false;
-    }
-
-    return hasPunctuation(sentence) || hasQuestionPattern(sentence);
-}
-
-bool AiChatClient::EnglishBackendTrigger::hasPunctuation(const std::string& sentence) const {
-    if (sentence.empty()) {
-        return false;
-    }
-
-    char lastChar = sentence.back();
-    return lastChar == '.' || lastChar == '!' || lastChar == '?';
-}
-
-bool AiChatClient::EnglishBackendTrigger::hasQuestionPattern(const std::string& sentence) const {
-    // Convert to lowercase for pattern matching
-    std::string lowerSentence = sentence;
-    std::transform(lowerSentence.begin(), lowerSentence.end(), lowerSentence.begin(), ::tolower);
-
-    static const std::vector<std::string> questionWords = {
-        "what", "how", "when", "where", "why", "who", "which", "can", "could",
-        "would", "should", "will", "is", "are", "do", "does", "did"
-    };
-
-    // Look for question words and require punctuation to indicate completeness
-    for (const auto& word : questionWords) {
-        if (lowerSentence.find(word) != std::string::npos) {
-            // Only trigger if sentence also has punctuation (indicating completeness)
-            return hasPunctuation(sentence);
-        }
-    }
-
-    return false;
-}
-
-// =============================================================================
-// KoreanBackendTrigger Implementation
-// =============================================================================
-
-AiChatClient::KoreanBackendTrigger::KoreanBackendTrigger(const Config& config)
-    : BackendTriggerBase(config)
-{
-}
-
-bool AiChatClient::KoreanBackendTrigger::shouldTrigger(const std::string& sentence) const {
-    if (!mConfig.mEnableSmartTriggers) {
-        return false;
-    }
-
-    return hasPunctuation(sentence) || hasQuestionPattern(sentence);
-}
-
-bool AiChatClient::KoreanBackendTrigger::hasPunctuation(const std::string& sentence) const {
-    if (sentence.empty()) {
-        return false;
-    }
-
-    // Korean punctuation (UTF-8 encoded)
-    static const std::vector<std::string> koreanPunctuation = {
-        "。", "！", "？", ".", "~", "요.", "다.", "죠.", "네.", "야.", "지?"
-    };
-
-    // Also check for standard punctuation
-    char lastChar = sentence.back();
-    if (lastChar == '.' || lastChar == '!' || lastChar == '?') {
-        return true;
-    }
-
-    for (const auto& punct : koreanPunctuation) {
-        if (sentence.length() >= punct.length()) {
-            if (sentence.substr(sentence.length() - punct.length()) == punct) {
-                return true;
-            }
-        }
-    }
-
-    return false;
-}
-
-bool AiChatClient::KoreanBackendTrigger::hasQuestionPattern(const std::string& sentence) const {
-    // Korean question words (in UTF-8)
-    static const std::vector<std::string> koreanQuestionWords = {
-        "뭐", "무엇", "언제", "어디", "왜", "누구", "어떻게", "어느",
-        "몇", "얼마", "어떤", "할까", "인가", "습니까", "ㅂ니까",
-        "는가", "나요", "까요", "을까", "를까"
-    };
-
-    // Korean question endings/particles
-    static const std::vector<std::string> koreanQuestionEndings = {
-        "까", "가", "니", "요", "나", "냐", "어", "야", "지", "ㅏ", "ㅓ", "ㅗ", "ㅜ"
-    };
-
-    // Check Korean question words - but require punctuation for completeness
-    for (const auto& word : koreanQuestionWords) {
-        if (sentence.find(word) != std::string::npos) {
-            // Only trigger if sentence also has punctuation (indicating completeness)
-            return hasPunctuation(sentence);
-        }
-    }
-
-    // Check Korean question endings (at the end of sentence)
-    for (const auto& ending : koreanQuestionEndings) {
-        if (sentence.length() >= ending.length()) {
-            if (sentence.substr(sentence.length() - ending.length()) == ending) {
-                // Question endings themselves indicate completeness
-                return true;
-            }
-        }
-    }
-
-    return false;
-}
-
-// =============================================================================
-// ResponseManager Implementation
-// =============================================================================
-
-AiChatClient::ResponseManager::ResponseManager(uint32_t maxConcurrentCalls)
-    : mMaxConcurrentCalls(maxConcurrentCalls)
-{
-}
-
-void AiChatClient::ResponseManager::addPendingRequest(const std::string& requestId, const std::string& conversation) {
-    // Clean up old requests first
-    invalidateOldRequests();
-
-    // Remove oldest request if we exceed limit
-    if (mRequests.size() >= mMaxConcurrentCalls) {
-        auto oldestIt = std::min_element(mRequests.begin(), mRequests.end(),
-            [](const auto& a, const auto& b) {
-                return a.second.timestamp < b.second.timestamp;
-            });
-        if (oldestIt != mRequests.end()) {
-            mRequests.erase(oldestIt);
-        }
-    }
-
-    RequestInfo info;
-    info.conversation = conversation;
-    info.timestamp = std::chrono::steady_clock::now();
-    info.isComplete = false;
-
-    mRequests[requestId] = info;
-}
-
-void AiChatClient::ResponseManager::handleResponse(const std::string& requestId, const std::string& response) {
-    auto it = mRequests.find(requestId);
-    if (it != mRequests.end()) {
-        it->second.response = response;
-        it->second.isComplete = true;
-    }
-}
-
-void AiChatClient::ResponseManager::invalidateOldRequests() {
-    for (auto it = mRequests.begin(); it != mRequests.end();) {
-        if (isRequestExpired(it->second)) {
-            it = mRequests.erase(it);
-        } else {
-            ++it;
-        }
-    }
-}
-
-bool AiChatClient::ResponseManager::hasCachedResponse() const {
-    for (const auto& pair : mRequests) {
-        if (pair.second.isComplete) {
-            return true;
-        }
-    }
-    return false;
-}
-
-
-
-std::string AiChatClient::ResponseManager::getMergedResponse() const {
-    std::vector<std::string> responses;
-
-    for (const auto& pair : mRequests) {
-        if (pair.second.isComplete && !pair.second.response.empty()) {
-            responses.push_back(pair.second.response);
-        }
-    }
-
-    if (responses.empty()) {
-        return "";
-    }
-
-    if (responses.size() == 1) {
-        return responses[0];
-    }
-
-    // For multiple responses, return the longest one (most complete)
-    auto maxIt = std::max_element(responses.begin(), responses.end(),
-        [](const std::string& a, const std::string& b) {
-            return a.length() < b.length();
-        });
-
-    return *maxIt;
-}
-
-void AiChatClient::ResponseManager::clear() {
-    mRequests.clear();
-}
-
-size_t AiChatClient::ResponseManager::getPendingCount() const {
-    size_t count = 0;
-    for (const auto& pair : mRequests) {
-        if (!pair.second.isComplete) {
-            count++;
-        }
-    }
-    return count;
-}
-
-bool AiChatClient::ResponseManager::hasPendingConversation(const std::string& conversation) const {
-    for (const auto& pair : mRequests) {
-        if (!pair.second.isComplete && pair.second.conversation == conversation) {
-            return true;
-        }
-    }
-    return false;
-}
-
-
-
-bool AiChatClient::ResponseManager::isRequestExpired(const RequestInfo& request) const {
-    auto now = std::chrono::steady_clock::now();
-    auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - request.timestamp);
-    return elapsed.count() > REQUEST_TIMEOUT_MS;
-}
-
-// =============================================================================
-// ConversationState Implementation
-// =============================================================================
-
-AiChatClient::ConversationState::ConversationState()
-    : mCurrentState(State::Idle)
-{
-}
-
-void AiChatClient::ConversationState::setState(State state) {
-    mCurrentState = state;
-}
-
-AiChatClient::ConversationState::State AiChatClient::ConversationState::getState() const {
-    return mCurrentState;
-}
-
-void AiChatClient::ConversationState::markConversationStart() {
-    setState(State::Accumulating);
-}
-
-void AiChatClient::ConversationState::markConversationEnd() {
-    // Nothing to do - just marking the end for state management
-}
-
-void AiChatClient::ConversationState::markProcessingStart() {
-    if (mCurrentState == State::Accumulating) {
-        setState(State::Processing);
-    }
-}
-
-void AiChatClient::ConversationState::markProcessingComplete() {
-    setState(State::Completed);
-}
-
-bool AiChatClient::ConversationState::isProcessing() const {
-    return mCurrentState == State::Processing || mCurrentState == State::WaitingForEnd;
-}
-
-bool AiChatClient::ConversationState::canAcceptSentences() const {
-    return mCurrentState == State::Idle ||
-           mCurrentState == State::Accumulating ||
-           mCurrentState == State::Processing;
-}
-
-
-
-void AiChatClient::ConversationState::reset() {
-    mCurrentState = State::Idle;
+    mPImpl->createTriggerForLanguage(config.mLanguage);
+    mPImpl->mResponseManager = std::make_unique<ResponseManager>(config.mMaxConcurrentCalls);
 }
 
 } // namespace aichat
