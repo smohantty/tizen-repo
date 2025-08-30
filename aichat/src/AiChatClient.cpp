@@ -237,6 +237,28 @@ public:
         return false;
     }
 
+    bool hasResponseForConversation(const std::string& conversation) const {
+        for (const auto& pair : mRequests) {
+            if (pair.second.conversation == conversation &&
+                pair.second.isComplete &&
+                !pair.second.response.empty()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    std::string getResponseForConversation(const std::string& conversation) const {
+        for (const auto& pair : mRequests) {
+            if (pair.second.conversation == conversation &&
+                pair.second.isComplete &&
+                !pair.second.response.empty()) {
+                return pair.second.response;
+            }
+        }
+        return "";
+    }
+
 private:
     struct RequestInfo {
         std::string conversation;
@@ -593,45 +615,78 @@ void AiChatClient::endConversation() {
     mPImpl->mState->markConversationEnd();
     mPImpl->mState->setState(ConversationState::State::WaitingForEnd);
 
-    // Wait for pending responses before checking cache (up to 2 seconds)
-    const int maxWaitMs = 2000;
-    const int checkIntervalMs = 50;
-    int waitedMs = 0;
+    // Get the final complete conversation
+    const std::string finalConversation = mPImpl->getFullConversation();
 
-    while (waitedMs < maxWaitMs &&
-           mPImpl->mResponseManager->getPendingCount() > 0 &&
-           !mPImpl->mResponseManager->hasCachedResponse()) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(checkIntervalMs));
-        waitedMs += checkIntervalMs;
-    }
-
-    // Check if we now have a cached response after waiting
-    if (mPImpl->mResponseManager->hasCachedResponse()) {
+    if (finalConversation.empty()) {
         mPImpl->sendFinalResponse();
         return;
     }
 
-    // Send final conversation if no cached response available
-    if (!mPImpl->isConversationEmpty()) {
-        const std::string& conversation = mPImpl->getFullConversation();
-        // Only send if we don't already have a pending request for this conversation
-        if (!mPImpl->mResponseManager->hasPendingConversation(conversation)) {
-            std::string requestId = mPImpl->generateRequestId();
-            mPImpl->handleTriggerEvent(conversation, requestId);
-            // Reset counter since we just made a backend call
-            mPImpl->mSentencesSinceLastBackendCall = 0;
+    const int maxWaitMs = 2000;
+    const int checkIntervalMs = 50;
+    int waitedMs = 0;
 
-            // Wait for this final response
+    // First, check if we already have a response for the final complete conversation
+    if (mPImpl->mResponseManager->hasResponseForConversation(finalConversation)) {
+        // Send the specific response for the final conversation
+        std::string finalResponse = mPImpl->mResponseManager->getResponseForConversation(finalConversation);
+        if (mPImpl->mResponseCallback && !finalResponse.empty()) {
+            mPImpl->mResponseCallback(finalResponse);
+        } else if (mPImpl->mResponseCallback) {
+            mPImpl->mResponseCallback("No response available");
+        }
+        mPImpl->mState->markProcessingComplete();
+        mPImpl->mResponseManager->clear();
+        return;
+    }
+
+    // Wait specifically for the response to the final complete conversation
+    while (waitedMs < maxWaitMs &&
+           !mPImpl->mResponseManager->hasResponseForConversation(finalConversation)) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(checkIntervalMs));
+        waitedMs += checkIntervalMs;
+    }
+
+    // Check if we now have the response for the final conversation
+    if (mPImpl->mResponseManager->hasResponseForConversation(finalConversation)) {
+        std::string finalResponse = mPImpl->mResponseManager->getResponseForConversation(finalConversation);
+        if (mPImpl->mResponseCallback && !finalResponse.empty()) {
+            mPImpl->mResponseCallback(finalResponse);
+        } else if (mPImpl->mResponseCallback) {
+            mPImpl->mResponseCallback("No response available");
+        }
+    } else {
+        // No response for final conversation yet, make a new request
+        if (!mPImpl->mResponseManager->hasPendingConversation(finalConversation)) {
+            std::string requestId = mPImpl->generateRequestId();
+            mPImpl->handleTriggerEvent(finalConversation, requestId);
+
+            // Wait for this specific response
             waitedMs = 0;
-            while (waitedMs < maxWaitMs && !mPImpl->mResponseManager->hasCachedResponse()) {
+            while (waitedMs < maxWaitMs &&
+                   !mPImpl->mResponseManager->hasResponseForConversation(finalConversation)) {
                 std::this_thread::sleep_for(std::chrono::milliseconds(checkIntervalMs));
                 waitedMs += checkIntervalMs;
             }
+
+            if (mPImpl->mResponseManager->hasResponseForConversation(finalConversation)) {
+                std::string finalResponse = mPImpl->mResponseManager->getResponseForConversation(finalConversation);
+                if (mPImpl->mResponseCallback && !finalResponse.empty()) {
+                    mPImpl->mResponseCallback(finalResponse);
+                } else if (mPImpl->mResponseCallback) {
+                    mPImpl->mResponseCallback("No response available");
+                }
+            } else if (mPImpl->mResponseCallback) {
+                mPImpl->mResponseCallback("No response available");
+            }
+        } else if (mPImpl->mResponseCallback) {
+            mPImpl->mResponseCallback("No response available");
         }
     }
 
-    // Send final response (cached or "No response available")
-    mPImpl->sendFinalResponse();
+    mPImpl->mState->markProcessingComplete();
+    mPImpl->mResponseManager->clear();
 }
 
 void AiChatClient::setBackendCallback(BackendCallback callback) {

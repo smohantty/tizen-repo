@@ -27,25 +27,25 @@ private:
         static std::string generateMockResponse(const std::string& conversation) {
         // English patterns
         if (conversation.find("?") != std::string::npos) {
-            return "That's a great question! Let me help you with that.";
+            return conversation + " : That's a great question! Let me help you with that.";
         } else if (conversation.find("hello") != std::string::npos ||
                    conversation.find("hi") != std::string::npos) {
-            return "Hello! How can I assist you today?";
+            return conversation + " : Hello! How can I assist you today?";
         } else if (conversation.find("help") != std::string::npos) {
-            return "I'm here to help! What do you need assistance with?";
+            return conversation + " : I'm here to help! What do you need assistance with?";
         }
         // Korean patterns
         else if (conversation.find("안녕") != std::string::npos) {
-            return "안녕하세요! 어떻게 도와드릴까요?";
+            return conversation + " : 안녕하세요! 어떻게 도와드릴까요?";
         } else if (conversation.find("뭐") != std::string::npos ||
                    conversation.find("무엇") != std::string::npos ||
                    conversation.find("까요") != std::string::npos) {
-            return "좋은 질문이네요! 도와드리겠습니다.";
+            return conversation + " : 좋은 질문이네요! 도와드리겠습니다.";
         } else if (conversation.find("도움") != std::string::npos ||
                    conversation.find("도와") != std::string::npos) {
-            return "네, 기꺼이 도와드리겠습니다!";
+            return conversation + " : 네, 기꺼이 도와드리겠습니다!";
         } else {
-            return "I understand. Let me provide you with a helpful response.";
+            return conversation + " : I understand. Let me provide you with a helpful response.";
         }
     }
 };
