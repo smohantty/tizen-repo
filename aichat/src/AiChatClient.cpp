@@ -6,6 +6,12 @@
 #include <iomanip>
 #include <unordered_map>
 #include <thread>
+#include <queue>
+#include <mutex>
+#include <condition_variable>
+#include <atomic>
+#include <variant>
+#include <type_traits>
 
 namespace aichat {
 
@@ -15,6 +21,80 @@ using Language = AiChatClient::Language;
 using BackendCallback = AiChatClient::BackendCallback;
 using ResponseCallback = AiChatClient::ResponseCallback;
 using ErrorCallback = AiChatClient::ErrorCallback;
+
+// =============================================================================
+// Message Types for Worker Thread
+// =============================================================================
+
+enum class MessageType {
+    StreamSentence,
+    EndConversation,
+    BackendResult
+};
+
+struct StreamSentenceMessage {
+    std::string sentence;
+};
+
+struct EndConversationMessage {
+    // No additional data needed
+};
+
+struct BackendResultMessage {
+    std::string response;
+    std::string requestId;
+};
+
+using Message = std::variant<StreamSentenceMessage, EndConversationMessage, BackendResultMessage>;
+
+// =============================================================================
+// Thread-Safe Queue Implementation
+// =============================================================================
+
+template<typename T>
+class ThreadSafeQueue {
+public:
+    void push(const T& item) {
+        std::lock_guard<std::mutex> lock(mMutex);
+        mQueue.push(item);
+        mCondition.notify_one();
+    }
+
+    bool pop(T& item) {
+        std::unique_lock<std::mutex> lock(mMutex);
+        mCondition.wait(lock, [this] { return !mQueue.empty() || mShutdown; });
+
+        if (mShutdown && mQueue.empty()) {
+            return false; // Shutdown signal
+        }
+
+        item = std::move(mQueue.front());
+        mQueue.pop();
+        return true;
+    }
+
+    void shutdown() {
+        std::lock_guard<std::mutex> lock(mMutex);
+        mShutdown = true;
+        mCondition.notify_all();
+    }
+
+    bool empty() const {
+        std::lock_guard<std::mutex> lock(mMutex);
+        return mQueue.empty();
+    }
+
+    size_t size() const {
+        std::lock_guard<std::mutex> lock(mMutex);
+        return mQueue.size();
+    }
+
+private:
+    mutable std::mutex mMutex;
+    std::queue<T> mQueue;
+    std::condition_variable mCondition;
+    std::atomic<bool> mShutdown{false};
+};
 
 // =============================================================================
 // Forward Declarations for Implementation Classes
@@ -348,11 +428,14 @@ public:
         , mState(std::make_unique<ConversationState>())
         , mConfig(config)
         , mSentencesSinceLastBackendCall(0)
+        , mWorkerThread(&Impl::workerLoop, this)
     {
         createTriggerForLanguage(config.mLanguage);
     }
 
-    ~Impl() = default;
+    ~Impl() {
+        shutdown();
+    }
 
     // Core components
     std::string mConversation;
@@ -369,7 +452,189 @@ public:
     // Chunking state tracking
     size_t mSentencesSinceLastBackendCall;
 
+    // Worker thread management
+    ThreadSafeQueue<Message> mMessageQueue;
+    std::thread mWorkerThread;
+    std::atomic<bool> mShutdown{false};
+
     // Internal methods
+    void submitMessage(Message message) {
+        mMessageQueue.push(std::move(message));
+    }
+
+    void shutdown() {
+        mShutdown = true;
+        mMessageQueue.shutdown();
+
+        if (mWorkerThread.joinable()) {
+            mWorkerThread.join();
+        }
+    }
+
+    void workerLoop() {
+        while (!mShutdown) {
+            Message message;
+            if (mMessageQueue.pop(message)) {
+                processMessage(std::move(message));
+            }
+            // Don't break when queue is empty - keep waiting for new messages
+            // The loop will only exit when mShutdown is set to true
+        }
+    }
+
+    void processMessage(Message message) {
+        std::visit([this](auto&& msg) {
+            using T = std::decay_t<decltype(msg)>;
+            if constexpr (std::is_same_v<T, StreamSentenceMessage>) {
+                processStreamSentence(msg.sentence);
+            } else if constexpr (std::is_same_v<T, EndConversationMessage>) {
+                processEndConversation();
+            } else if constexpr (std::is_same_v<T, BackendResultMessage>) {
+                processBackendResult(msg.response, msg.requestId);
+            }
+        }, std::move(message));
+    }
+
+    void processStreamSentence(const std::string& sentence) {
+        if (sentence.empty() || !mState->canAcceptSentences()) {
+            return;
+        }
+
+        // Auto-detect language and switch trigger if needed
+        if (mConfig.mLanguage == Language::Auto) {
+            Language detectedLang = detectLanguage(sentence);
+
+            // Switch trigger if detected language doesn't match current trigger
+            if ((detectedLang == Language::Korean &&
+                 dynamic_cast<KoreanBackendTrigger*>(mTrigger.get()) == nullptr) ||
+                (detectedLang == Language::English &&
+                 dynamic_cast<EnglishBackendTrigger*>(mTrigger.get()) == nullptr)) {
+                createTriggerForLanguage(detectedLang);
+            }
+        }
+
+        // Add sentence to conversation
+        addSentenceToConversation(sentence);
+        mSentencesSinceLastBackendCall++;
+        mTrigger->updateLastActivity();
+
+        // Update state if this is the first sentence
+        if (mState->getState() == ConversationState::State::Idle) {
+            mState->markConversationStart();
+            mState->setState(ConversationState::State::Accumulating);
+        }
+
+        // Determine if we should trigger a backend call and what to send
+        bool shouldCallBackend = false;
+        std::string conversationToSend;
+
+        // Priority 1: Smart triggers (send full conversation)
+        if (mConfig.mEnableSmartTriggers) {
+            const std::string& fullConversation = getFullConversation();
+            // Check if the FULL conversation (not just current sentence) meets trigger criteria
+            if (mTrigger->shouldTrigger(fullConversation) || mTrigger->shouldTriggerOnTimeout()) {
+                // Only trigger if we don't already have a pending request for this conversation
+                if (!mResponseManager->hasPendingConversation(fullConversation)) {
+                    conversationToSend = fullConversation;
+                    shouldCallBackend = true;
+                }
+            }
+        }
+        // Priority 2: Chunking (only if smart triggers didn't fire)
+        else if (mConfig.mEnableChunking && mSentencesSinceLastBackendCall >= mConfig.mChunkSize) {
+            if (mTrigger->shouldTrigger(sentence)) {
+                const std::string& fullConversation = getFullConversation();
+                // Only trigger if we don't already have a pending request for this conversation
+                if (!mResponseManager->hasPendingConversation(fullConversation)) {
+                    conversationToSend = fullConversation;
+                    shouldCallBackend = true;
+                }
+            }
+        }
+
+        // Make the backend call if needed
+        if (shouldCallBackend) {
+            std::string requestId = generateRequestId();
+            handleTriggerEvent(conversationToSend, requestId);
+            // Reset counter since we just made a backend call
+            mSentencesSinceLastBackendCall = 0;
+        }
+    }
+
+    void processEndConversation() {
+        if (mState->getState() == ConversationState::State::Idle) {
+            return;
+        }
+
+        mState->markConversationEnd();
+        mState->setState(ConversationState::State::WaitingForEnd);
+
+        // Get the final complete conversation
+        const std::string finalConversation = getFullConversation();
+
+        if (finalConversation.empty()) {
+            sendFinalResponse();
+            return;
+        }
+
+        const int maxWaitMs = 5000; // Increased wait time
+        const int checkIntervalMs = 100; // Increased check interval
+        int waitedMs = 0;
+
+        // Wait for any pending responses to complete
+        while (waitedMs < maxWaitMs && mResponseManager->getPendingCount() > 0) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(checkIntervalMs));
+            waitedMs += checkIntervalMs;
+        }
+
+
+
+        // Now check if we have any cached responses
+        if (mResponseManager->hasCachedResponse()) {
+            // Use the merged response (best available response)
+            std::string finalResponse = mResponseManager->getMergedResponse();
+            if (mResponseCallback && !finalResponse.empty()) {
+                mResponseCallback(finalResponse);
+            } else if (mResponseCallback) {
+                mResponseCallback("No response available");
+            }
+        } else {
+            // No cached response yet, make a new request for the final conversation
+            if (!mResponseManager->hasPendingConversation(finalConversation)) {
+                std::string requestId = generateRequestId();
+                handleTriggerEvent(finalConversation, requestId);
+
+                // Wait for this specific response
+                waitedMs = 0;
+                while (waitedMs < maxWaitMs && !mResponseManager->hasCachedResponse()) {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(checkIntervalMs));
+                    waitedMs += checkIntervalMs;
+                }
+
+                if (mResponseManager->hasCachedResponse()) {
+                    std::string finalResponse = mResponseManager->getMergedResponse();
+                    if (mResponseCallback && !finalResponse.empty()) {
+                        mResponseCallback(finalResponse);
+                    } else if (mResponseCallback) {
+                        mResponseCallback("No response available");
+                    }
+                } else if (mResponseCallback) {
+                    mResponseCallback("No response available");
+                }
+            } else if (mResponseCallback) {
+                mResponseCallback("No response available");
+            }
+        }
+
+        mState->markProcessingComplete();
+        mResponseManager->clear();
+    }
+
+    void processBackendResult(const std::string& response, const std::string& requestId) {
+        // Cache the response for later use when endConversation() is called
+        mResponseManager->handleResponse(requestId, response);
+    }
+
     void handleTriggerEvent(const std::string& conversation, const std::string& triggerId) {
         if (!mBackendCallback) {
             handleError("Backend callback not set");
@@ -380,9 +645,10 @@ public:
         mResponseManager->addPendingRequest(triggerId, conversation);
         mState->markProcessingStart();
 
-        // Create response handler
-        auto responseHandler = [this, triggerId](const std::string& response) {
-            handleBackendResponse(response, triggerId);
+        // Create response handler that processes result immediately
+        auto responseHandler = [this, requestId = triggerId](const std::string& response) {
+            // Process the backend result immediately since it's called from a different thread
+            processBackendResult(response, requestId);
         };
 
         // Create error handler
@@ -396,17 +662,6 @@ public:
         } catch (const std::exception& e) {
             errorHandler("Backend callback failed: " + std::string(e.what()));
         }
-    }
-
-    void handleBackendResponse(const std::string& response, const std::string& requestId) {
-        // Cache the response for later use when endConversation() is called
-        mResponseManager->handleResponse(requestId, response);
-
-        // Do NOT send response to user immediately - this defeats the latency optimization
-        // The response will be sent only when endConversation() is called via sendFinalResponse()
-
-        // Note: We don't mark processing as complete yet since user hasn't called endConversation()
-        // Processing is complete only when the final response is delivered to the user
     }
 
     void handleError(const std::string& error) {
@@ -542,151 +797,11 @@ AiChatClient::AiChatClient(const Config& config)
 AiChatClient::~AiChatClient() = default;
 
 void AiChatClient::streamSentence(const std::string& sentence) {
-    if (sentence.empty() || !mPImpl->mState->canAcceptSentences()) {
-        return;
-    }
-
-    // Auto-detect language and switch trigger if needed
-    if (mPImpl->mConfig.mLanguage == Language::Auto) {
-        Language detectedLang = mPImpl->detectLanguage(sentence);
-
-        // Switch trigger if detected language doesn't match current trigger
-        if ((detectedLang == Language::Korean &&
-             dynamic_cast<KoreanBackendTrigger*>(mPImpl->mTrigger.get()) == nullptr) ||
-            (detectedLang == Language::English &&
-             dynamic_cast<EnglishBackendTrigger*>(mPImpl->mTrigger.get()) == nullptr)) {
-            mPImpl->createTriggerForLanguage(detectedLang);
-        }
-    }
-
-    // Add sentence to conversation
-    mPImpl->addSentenceToConversation(sentence);
-    mPImpl->mSentencesSinceLastBackendCall++;
-    mPImpl->mTrigger->updateLastActivity();
-
-    // Update state if this is the first sentence
-    if (mPImpl->mState->getState() == ConversationState::State::Idle) {
-        mPImpl->mState->markConversationStart();
-        mPImpl->mState->setState(ConversationState::State::Accumulating);
-    }
-
-    // Determine if we should trigger a backend call and what to send
-    bool shouldCallBackend = false;
-    std::string conversationToSend;
-
-    // Priority 1: Smart triggers (send full conversation)
-    if (mPImpl->mConfig.mEnableSmartTriggers) {
-        const std::string& fullConversation = mPImpl->getFullConversation();
-        // Check if the FULL conversation (not just current sentence) meets trigger criteria
-        if (mPImpl->mTrigger->shouldTrigger(fullConversation) || mPImpl->mTrigger->shouldTriggerOnTimeout()) {
-            // Only trigger if we don't already have a pending request for this conversation
-            if (!mPImpl->mResponseManager->hasPendingConversation(fullConversation)) {
-                conversationToSend = fullConversation;
-                shouldCallBackend = true;
-            }
-        }
-    }
-    // Priority 2: Chunking (only if smart triggers didn't fire)
-    else if (mPImpl->mConfig.mEnableChunking && mPImpl->mSentencesSinceLastBackendCall >= mPImpl->mConfig.mChunkSize) {
-        if (mPImpl->mTrigger->shouldTrigger(sentence)) {
-            const std::string& fullConversation = mPImpl->getFullConversation();
-            // Only trigger if we don't already have a pending request for this conversation
-            if (!mPImpl->mResponseManager->hasPendingConversation(fullConversation)) {
-                conversationToSend = fullConversation;
-                shouldCallBackend = true;
-            }
-        }
-    }
-
-    // Make the backend call if needed
-    if (shouldCallBackend) {
-        std::string requestId = mPImpl->generateRequestId();
-        mPImpl->handleTriggerEvent(conversationToSend, requestId);
-        // Reset counter since we just made a backend call
-        mPImpl->mSentencesSinceLastBackendCall = 0;
-    }
+    mPImpl->submitMessage(StreamSentenceMessage{sentence});
 }
 
 void AiChatClient::endConversation() {
-    if (mPImpl->mState->getState() == ConversationState::State::Idle) {
-        return;
-    }
-
-    mPImpl->mState->markConversationEnd();
-    mPImpl->mState->setState(ConversationState::State::WaitingForEnd);
-
-    // Get the final complete conversation
-    const std::string finalConversation = mPImpl->getFullConversation();
-
-    if (finalConversation.empty()) {
-        mPImpl->sendFinalResponse();
-        return;
-    }
-
-    const int maxWaitMs = 2000;
-    const int checkIntervalMs = 50;
-    int waitedMs = 0;
-
-    // First, check if we already have a response for the final complete conversation
-    if (mPImpl->mResponseManager->hasResponseForConversation(finalConversation)) {
-        // Send the specific response for the final conversation
-        std::string finalResponse = mPImpl->mResponseManager->getResponseForConversation(finalConversation);
-        if (mPImpl->mResponseCallback && !finalResponse.empty()) {
-            mPImpl->mResponseCallback(finalResponse);
-        } else if (mPImpl->mResponseCallback) {
-            mPImpl->mResponseCallback("No response available");
-        }
-        mPImpl->mState->markProcessingComplete();
-        mPImpl->mResponseManager->clear();
-        return;
-    }
-
-    // Wait specifically for the response to the final complete conversation
-    while (waitedMs < maxWaitMs &&
-           !mPImpl->mResponseManager->hasResponseForConversation(finalConversation)) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(checkIntervalMs));
-        waitedMs += checkIntervalMs;
-    }
-
-    // Check if we now have the response for the final conversation
-    if (mPImpl->mResponseManager->hasResponseForConversation(finalConversation)) {
-        std::string finalResponse = mPImpl->mResponseManager->getResponseForConversation(finalConversation);
-        if (mPImpl->mResponseCallback && !finalResponse.empty()) {
-            mPImpl->mResponseCallback(finalResponse);
-        } else if (mPImpl->mResponseCallback) {
-            mPImpl->mResponseCallback("No response available");
-        }
-    } else {
-        // No response for final conversation yet, make a new request
-        if (!mPImpl->mResponseManager->hasPendingConversation(finalConversation)) {
-            std::string requestId = mPImpl->generateRequestId();
-            mPImpl->handleTriggerEvent(finalConversation, requestId);
-
-            // Wait for this specific response
-            waitedMs = 0;
-            while (waitedMs < maxWaitMs &&
-                   !mPImpl->mResponseManager->hasResponseForConversation(finalConversation)) {
-                std::this_thread::sleep_for(std::chrono::milliseconds(checkIntervalMs));
-                waitedMs += checkIntervalMs;
-            }
-
-            if (mPImpl->mResponseManager->hasResponseForConversation(finalConversation)) {
-                std::string finalResponse = mPImpl->mResponseManager->getResponseForConversation(finalConversation);
-                if (mPImpl->mResponseCallback && !finalResponse.empty()) {
-                    mPImpl->mResponseCallback(finalResponse);
-                } else if (mPImpl->mResponseCallback) {
-                    mPImpl->mResponseCallback("No response available");
-                }
-            } else if (mPImpl->mResponseCallback) {
-                mPImpl->mResponseCallback("No response available");
-            }
-        } else if (mPImpl->mResponseCallback) {
-            mPImpl->mResponseCallback("No response available");
-        }
-    }
-
-    mPImpl->mState->markProcessingComplete();
-    mPImpl->mResponseManager->clear();
+    mPImpl->submitMessage(EndConversationMessage{});
 }
 
 void AiChatClient::setBackendCallback(BackendCallback callback) {
