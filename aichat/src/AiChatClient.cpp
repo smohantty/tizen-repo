@@ -26,12 +26,6 @@ using ErrorCallback = AiChatClient::ErrorCallback;
 // Message Types for Worker Thread
 // =============================================================================
 
-enum class MessageType {
-    StreamSentence,
-    EndConversation,
-    BackendResult
-};
-
 struct StreamSentenceMessage {
     std::string sentence;
 };
@@ -456,6 +450,7 @@ public:
     ThreadSafeQueue<Message> mMessageQueue;
     std::thread mWorkerThread;
     std::atomic<bool> mShutdown{false};
+    std::atomic<bool> mFinalResponseSent{false};
 
     // Internal methods
     void submitMessage(Message message) {
@@ -568,6 +563,7 @@ public:
 
         mState->markConversationEnd();
         mState->setState(ConversationState::State::WaitingForEnd);
+        mFinalResponseSent = false; // Reset flag for new conversation end
 
         // Get the final complete conversation
         const std::string finalConversation = getFullConversation();
@@ -577,19 +573,7 @@ public:
             return;
         }
 
-        const int maxWaitMs = 5000; // Increased wait time
-        const int checkIntervalMs = 100; // Increased check interval
-        int waitedMs = 0;
-
-        // Wait for any pending responses to complete
-        while (waitedMs < maxWaitMs && mResponseManager->getPendingCount() > 0) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(checkIntervalMs));
-            waitedMs += checkIntervalMs;
-        }
-
-
-
-        // Now check if we have any cached responses
+        // Check if we already have cached responses
         if (mResponseManager->hasCachedResponse()) {
             // Use the merged response (best available response)
             std::string finalResponse = mResponseManager->getMergedResponse();
@@ -598,41 +582,39 @@ public:
             } else if (mResponseCallback) {
                 mResponseCallback("No response available");
             }
-        } else {
-            // No cached response yet, make a new request for the final conversation
-            if (!mResponseManager->hasPendingConversation(finalConversation)) {
-                std::string requestId = generateRequestId();
-                handleTriggerEvent(finalConversation, requestId);
-
-                // Wait for this specific response
-                waitedMs = 0;
-                while (waitedMs < maxWaitMs && !mResponseManager->hasCachedResponse()) {
-                    std::this_thread::sleep_for(std::chrono::milliseconds(checkIntervalMs));
-                    waitedMs += checkIntervalMs;
-                }
-
-                if (mResponseManager->hasCachedResponse()) {
-                    std::string finalResponse = mResponseManager->getMergedResponse();
-                    if (mResponseCallback && !finalResponse.empty()) {
-                        mResponseCallback(finalResponse);
-                    } else if (mResponseCallback) {
-                        mResponseCallback("No response available");
-                    }
-                } else if (mResponseCallback) {
-                    mResponseCallback("No response available");
-                }
-            } else if (mResponseCallback) {
-                mResponseCallback("No response available");
-            }
+            mState->markProcessingComplete();
+            mResponseManager->clear();
+            return;
         }
 
-        mState->markProcessingComplete();
-        mResponseManager->clear();
+        // No cached response yet, make a new request for the final conversation
+        if (!mResponseManager->hasPendingConversation(finalConversation)) {
+            std::string requestId = generateRequestId();
+            handleTriggerEvent(finalConversation, requestId);
+        }
+
+        // Don't wait here - let the backend response come through the message queue
+        // The response will be processed by processBackendResult() when it arrives
+        // and will trigger the final response callback
     }
 
     void processBackendResult(const std::string& response, const std::string& requestId) {
         // Cache the response for later use when endConversation() is called
         mResponseManager->handleResponse(requestId, response);
+
+        // If we're waiting for the end of conversation and now have a response, send it
+        if (mState->getState() == ConversationState::State::WaitingForEnd &&
+            mResponseManager->hasCachedResponse() && !mFinalResponseSent) {
+            std::string finalResponse = mResponseManager->getMergedResponse();
+            if (mResponseCallback && !finalResponse.empty()) {
+                mResponseCallback(finalResponse);
+            } else if (mResponseCallback) {
+                mResponseCallback("No response available");
+            }
+            mState->markProcessingComplete();
+            mResponseManager->clear();
+            mFinalResponseSent = true; // Mark that we've sent the final response
+        }
     }
 
     void handleTriggerEvent(const std::string& conversation, const std::string& triggerId) {
