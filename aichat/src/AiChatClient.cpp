@@ -261,33 +261,6 @@ public:
         }
     }
 
-    bool hasCachedResponse() const {
-        for (const auto& pair : mRequests) {
-            if (pair.second.isComplete && !pair.second.response.empty()) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    std::string getMergedResponse() const {
-        // Return the response for the most complete conversation (longest text)
-        // This represents the response to the full conversation context
-        std::string bestResponse;
-        size_t longestConversationLength = 0;
-
-        for (const auto& pair : mRequests) {
-            if (pair.second.isComplete && !pair.second.response.empty()) {
-                // Find the response corresponding to the longest/most complete conversation
-                if (pair.second.conversation.length() > longestConversationLength) {
-                    longestConversationLength = pair.second.conversation.length();
-                    bestResponse = pair.second.response;
-                }
-            }
-        }
-        return bestResponse;
-    }
-
     void clear() {
         mRequests.clear();
     }
