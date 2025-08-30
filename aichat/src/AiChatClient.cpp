@@ -333,6 +333,28 @@ public:
         return "";
     }
 
+    bool hasResponseForRequest(const std::string& requestId) const {
+        auto it = mRequests.find(requestId);
+        return it != mRequests.end() && it->second.isComplete && !it->second.response.empty();
+    }
+
+    std::string getResponseForRequest(const std::string& requestId) const {
+        auto it = mRequests.find(requestId);
+        if (it != mRequests.end() && it->second.isComplete && !it->second.response.empty()) {
+            return it->second.response;
+        }
+        return "";
+    }
+
+    std::string getRequestIdForConversation(const std::string& conversation) const {
+        for (const auto& pair : mRequests) {
+            if (pair.second.conversation == conversation && !pair.second.isComplete) {
+                return pair.first;
+            }
+        }
+        return "";
+    }
+
 private:
     struct RequestInfo {
         std::string conversation;
@@ -451,6 +473,7 @@ public:
     std::thread mWorkerThread;
     std::atomic<bool> mShutdown{false};
     std::atomic<bool> mFinalResponseSent{false};
+    std::string mFinalRequestId; // Track the final request ID
 
     // Internal methods
     void submitMessage(Message message) {
@@ -517,6 +540,7 @@ public:
         if (mState->getState() == ConversationState::State::Idle) {
             mState->markConversationStart();
             mState->setState(ConversationState::State::Accumulating);
+            mFinalRequestId.clear(); // Clear final request ID for new conversation
         }
 
         // Determine if we should trigger a backend call and what to send
@@ -573,10 +597,9 @@ public:
             return;
         }
 
-        // Check if we already have cached responses
-        if (mResponseManager->hasCachedResponse()) {
-            // Use the merged response (best available response)
-            std::string finalResponse = mResponseManager->getMergedResponse();
+        // Check if we already have a response for the final conversation
+        if (mResponseManager->hasResponseForConversation(finalConversation)) {
+            std::string finalResponse = mResponseManager->getResponseForConversation(finalConversation);
             if (mResponseCallback && !finalResponse.empty()) {
                 mResponseCallback(finalResponse);
             } else if (mResponseCallback) {
@@ -587,10 +610,15 @@ public:
             return;
         }
 
-        // No cached response yet, make a new request for the final conversation
+        // No response for final conversation yet, make a new request
         if (!mResponseManager->hasPendingConversation(finalConversation)) {
             std::string requestId = generateRequestId();
+            mFinalRequestId = requestId; // Track the final request ID
             handleTriggerEvent(finalConversation, requestId);
+        } else {
+            // If there's already a pending request for this conversation,
+            // find its request ID to track it as the final request
+            mFinalRequestId = mResponseManager->getRequestIdForConversation(finalConversation);
         }
 
         // Don't wait here - let the backend response come through the message queue
@@ -602,12 +630,11 @@ public:
         // Cache the response for later use when endConversation() is called
         mResponseManager->handleResponse(requestId, response);
 
-        // If we're waiting for the end of conversation and now have a response, send it
+        // If we're waiting for the end of conversation and this is the final request response, send it
         if (mState->getState() == ConversationState::State::WaitingForEnd &&
-            mResponseManager->hasCachedResponse() && !mFinalResponseSent) {
-            std::string finalResponse = mResponseManager->getMergedResponse();
-            if (mResponseCallback && !finalResponse.empty()) {
-                mResponseCallback(finalResponse);
+            requestId == mFinalRequestId && !mFinalResponseSent) {
+            if (mResponseCallback && !response.empty()) {
+                mResponseCallback(response);
             } else if (mResponseCallback) {
                 mResponseCallback("No response available");
             }
@@ -653,10 +680,13 @@ public:
     }
 
     void sendFinalResponse() {
-        if (mResponseManager->hasCachedResponse()) {
-            std::string response = mResponseManager->getMergedResponse();
+        // Check if we have a response for the final request
+        if (!mFinalRequestId.empty() && mResponseManager->hasResponseForRequest(mFinalRequestId)) {
+            std::string response = mResponseManager->getResponseForRequest(mFinalRequestId);
             if (mResponseCallback && !response.empty()) {
                 mResponseCallback(response);
+            } else if (mResponseCallback) {
+                mResponseCallback("No response available");
             }
         } else {
             // No response available
