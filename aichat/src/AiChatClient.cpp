@@ -5,6 +5,7 @@
 #include <random>
 #include <iomanip>
 #include <unordered_map>
+#include <thread>
 
 namespace aichat {
 
@@ -196,16 +197,21 @@ public:
     }
 
     std::string getMergedResponse() const {
-        std::string mergedResponse;
+        // Return the response for the most complete conversation (longest text)
+        // This represents the response to the full conversation context
+        std::string bestResponse;
+        size_t longestConversationLength = 0;
+
         for (const auto& pair : mRequests) {
             if (pair.second.isComplete && !pair.second.response.empty()) {
-                if (!mergedResponse.empty()) {
-                    mergedResponse += " ";
+                // Find the response corresponding to the longest/most complete conversation
+                if (pair.second.conversation.length() > longestConversationLength) {
+                    longestConversationLength = pair.second.conversation.length();
+                    bestResponse = pair.second.response;
                 }
-                mergedResponse += pair.second.response;
             }
         }
-        return mergedResponse;
+        return bestResponse;
     }
 
     void clear() {
@@ -371,13 +377,14 @@ public:
     }
 
     void handleBackendResponse(const std::string& response, const std::string& requestId) {
+        // Cache the response for later use when endConversation() is called
         mResponseManager->handleResponse(requestId, response);
 
-        if (mResponseCallback) {
-            mResponseCallback(response);
-        }
+        // Do NOT send response to user immediately - this defeats the latency optimization
+        // The response will be sent only when endConversation() is called via sendFinalResponse()
 
-        mState->markProcessingComplete();
+        // Note: We don't mark processing as complete yet since user hasn't called endConversation()
+        // Processing is complete only when the final response is delivered to the user
     }
 
     void handleError(const std::string& error) {
@@ -586,7 +593,19 @@ void AiChatClient::endConversation() {
     mPImpl->mState->markConversationEnd();
     mPImpl->mState->setState(ConversationState::State::WaitingForEnd);
 
-    // Check if we already have a cached response
+    // Wait for pending responses before checking cache (up to 2 seconds)
+    const int maxWaitMs = 2000;
+    const int checkIntervalMs = 50;
+    int waitedMs = 0;
+
+    while (waitedMs < maxWaitMs &&
+           mPImpl->mResponseManager->getPendingCount() > 0 &&
+           !mPImpl->mResponseManager->hasCachedResponse()) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(checkIntervalMs));
+        waitedMs += checkIntervalMs;
+    }
+
+    // Check if we now have a cached response after waiting
     if (mPImpl->mResponseManager->hasCachedResponse()) {
         mPImpl->sendFinalResponse();
         return;
@@ -601,10 +620,17 @@ void AiChatClient::endConversation() {
             mPImpl->handleTriggerEvent(conversation, requestId);
             // Reset counter since we just made a backend call
             mPImpl->mSentencesSinceLastBackendCall = 0;
+
+            // Wait for this final response
+            waitedMs = 0;
+            while (waitedMs < maxWaitMs && !mPImpl->mResponseManager->hasCachedResponse()) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(checkIntervalMs));
+                waitedMs += checkIntervalMs;
+            }
         }
     }
 
-    // Wait for response or timeout
+    // Send final response (cached or "No response available")
     mPImpl->sendFinalResponse();
 }
 
