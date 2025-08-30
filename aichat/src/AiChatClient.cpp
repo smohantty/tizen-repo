@@ -55,20 +55,38 @@ void AiChatClient::streamSentence(const std::string& sentence) {
         mState->setState(ConversationState::State::Accumulating);
     }
 
-    // Check if we should trigger backend call
-    if (mConfig.mEnableSmartTriggers && shouldTriggerBackendCall(sentence)) {
-        std::string conversation = mAccumulator->getFullConversation();
-        std::string requestId = generateRequestId();
-        handleTriggerEvent(conversation, requestId);
-    }
+    // Determine if we should trigger a backend call and what to send
+    bool shouldCallBackend = false;
+    std::string conversationToSend;
 
-    // Check for chunking opportunity
-    if (mConfig.mEnableChunking && mAccumulator->size() >= mConfig.mChunkSize) {
+    // Priority 1: Smart triggers (send full conversation)
+    if (mConfig.mEnableSmartTriggers) {
+        std::string fullConversation = mAccumulator->getFullConversation();
+        // Check if the FULL conversation (not just current sentence) meets trigger criteria
+        if (mTrigger->shouldTrigger(fullConversation) || mTrigger->shouldTriggerOnTimeout()) {
+            // Only trigger if we don't already have a pending request for this conversation
+            if (!mResponseManager->hasPendingConversation(fullConversation)) {
+                conversationToSend = fullConversation;
+                shouldCallBackend = true;
+            }
+        }
+    }
+    // Priority 2: Chunking (only if smart triggers didn't fire)
+    else if (mConfig.mEnableChunking && mAccumulator->size() >= mConfig.mChunkSize) {
         if (mTrigger->shouldTrigger(sentence)) {
             std::string chunk = mAccumulator->getChunk(mConfig.mChunkSize);
-            std::string requestId = generateRequestId();
-            handleTriggerEvent(chunk, requestId);
+            // Only trigger if we don't already have a pending request for this chunk
+            if (!mResponseManager->hasPendingConversation(chunk)) {
+                conversationToSend = chunk;
+                shouldCallBackend = true;
+            }
         }
+    }
+
+    // Make the backend call if needed
+    if (shouldCallBackend) {
+        std::string requestId = generateRequestId();
+        handleTriggerEvent(conversationToSend, requestId);
     }
 }
 
@@ -89,8 +107,11 @@ void AiChatClient::endConversation() {
     // Send final conversation if no cached response available
     if (!mAccumulator->isEmpty()) {
         std::string conversation = mAccumulator->getFullConversation();
-        std::string requestId = generateRequestId();
-        handleTriggerEvent(conversation, requestId);
+        // Only send if we don't already have a pending request for this conversation
+        if (!mResponseManager->hasPendingConversation(conversation)) {
+            std::string requestId = generateRequestId();
+            handleTriggerEvent(conversation, requestId);
+        }
     }
 
     // Wait for response or timeout
@@ -400,9 +421,11 @@ bool AiChatClient::EnglishBackendTrigger::hasQuestionPattern(const std::string& 
         "would", "should", "will", "is", "are", "do", "does", "did"
     };
 
+    // Look for question words and require punctuation to indicate completeness
     for (const auto& word : questionWords) {
-        if (lowerSentence.find(word) == 0 || lowerSentence.find(" " + word + " ") != std::string::npos) {
-            return true;
+        if (lowerSentence.find(word) != std::string::npos) {
+            // Only trigger if sentence also has punctuation (indicating completeness)
+            return hasPunctuation(sentence);
         }
     }
 
@@ -466,10 +489,11 @@ bool AiChatClient::KoreanBackendTrigger::hasQuestionPattern(const std::string& s
         "까", "가", "니", "요", "나", "냐", "어", "야", "지", "ㅏ", "ㅓ", "ㅗ", "ㅜ"
     };
 
-    // Check Korean question words (anywhere in sentence)
+    // Check Korean question words - but require punctuation for completeness
     for (const auto& word : koreanQuestionWords) {
         if (sentence.find(word) != std::string::npos) {
-            return true;
+            // Only trigger if sentence also has punctuation (indicating completeness)
+            return hasPunctuation(sentence);
         }
     }
 
@@ -477,6 +501,7 @@ bool AiChatClient::KoreanBackendTrigger::hasQuestionPattern(const std::string& s
     for (const auto& ending : koreanQuestionEndings) {
         if (sentence.length() >= ending.length()) {
             if (sentence.substr(sentence.length() - ending.length()) == ending) {
+                // Question endings themselves indicate completeness
                 return true;
             }
         }
@@ -586,6 +611,15 @@ size_t AiChatClient::ResponseManager::getPendingCount() const {
         }
     }
     return count;
+}
+
+bool AiChatClient::ResponseManager::hasPendingConversation(const std::string& conversation) const {
+    for (const auto& pair : mRequests) {
+        if (!pair.second.isComplete && pair.second.conversation == conversation) {
+            return true;
+        }
+    }
+    return false;
 }
 
 std::string AiChatClient::ResponseManager::selectBestResponse() const {

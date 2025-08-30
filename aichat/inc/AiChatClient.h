@@ -218,6 +218,7 @@ public:
 
     void clear();
     size_t getPendingCount() const;
+    bool hasPendingConversation(const std::string& conversation) const;
 
 private:
     struct RequestInfo {
