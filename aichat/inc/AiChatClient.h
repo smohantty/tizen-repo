@@ -58,10 +58,6 @@ public:
     explicit AiChatClient(const Config& config);
     ~AiChatClient();
 
-    // Delete copy constructor and assignment operator (following C++17 best practices)
-    AiChatClient(const AiChatClient&) = delete;
-    AiChatClient& operator=(const AiChatClient&) = delete;
-
     // PUBLIC API - Core functionality
     void streamSentence(const std::string& sentence);
     void endConversation();
