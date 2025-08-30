@@ -17,10 +17,10 @@ AiChatClient::AiChatClient()
 }
 
 AiChatClient::AiChatClient(const Config& config)
-    : mAccumulator(std::make_unique<SentenceAccumulator>(config.mMaxBufferSize))
-    , mResponseManager(std::make_unique<ResponseManager>(config.mMaxConcurrentCalls))
+    : mResponseManager(std::make_unique<ResponseManager>(config.mMaxConcurrentCalls))
     , mState(std::make_unique<ConversationState>())
     , mConfig(config)
+    , mSentencesSinceLastBackendCall(0)
 {
     createTriggerForLanguage(config.mLanguage);
 }
@@ -45,8 +45,9 @@ void AiChatClient::streamSentence(const std::string& sentence) {
         }
     }
 
-    // Add sentence to accumulator
-    mAccumulator->addSentence(sentence);
+    // Add sentence to conversation
+    addSentenceToConversation(sentence);
+    mSentencesSinceLastBackendCall++;
     mTrigger->updateLastActivity();
 
     // Update state if this is the first sentence
@@ -61,7 +62,7 @@ void AiChatClient::streamSentence(const std::string& sentence) {
 
     // Priority 1: Smart triggers (send full conversation)
     if (mConfig.mEnableSmartTriggers) {
-        std::string fullConversation = mAccumulator->getFullConversation();
+        const std::string& fullConversation = getFullConversation();
         // Check if the FULL conversation (not just current sentence) meets trigger criteria
         if (mTrigger->shouldTrigger(fullConversation) || mTrigger->shouldTriggerOnTimeout()) {
             // Only trigger if we don't already have a pending request for this conversation
@@ -72,12 +73,12 @@ void AiChatClient::streamSentence(const std::string& sentence) {
         }
     }
     // Priority 2: Chunking (only if smart triggers didn't fire)
-    else if (mConfig.mEnableChunking && mAccumulator->size() >= mConfig.mChunkSize) {
+    else if (mConfig.mEnableChunking && mSentencesSinceLastBackendCall >= mConfig.mChunkSize) {
         if (mTrigger->shouldTrigger(sentence)) {
-            std::string chunk = mAccumulator->getChunk(mConfig.mChunkSize);
-            // Only trigger if we don't already have a pending request for this chunk
-            if (!mResponseManager->hasPendingConversation(chunk)) {
-                conversationToSend = chunk;
+            const std::string& fullConversation = getFullConversation();
+            // Only trigger if we don't already have a pending request for this conversation
+            if (!mResponseManager->hasPendingConversation(fullConversation)) {
+                conversationToSend = fullConversation;
                 shouldCallBackend = true;
             }
         }
@@ -87,6 +88,8 @@ void AiChatClient::streamSentence(const std::string& sentence) {
     if (shouldCallBackend) {
         std::string requestId = generateRequestId();
         handleTriggerEvent(conversationToSend, requestId);
+        // Reset counter since we just made a backend call
+        mSentencesSinceLastBackendCall = 0;
     }
 }
 
@@ -105,12 +108,14 @@ void AiChatClient::endConversation() {
     }
 
     // Send final conversation if no cached response available
-    if (!mAccumulator->isEmpty()) {
-        std::string conversation = mAccumulator->getFullConversation();
+    if (!isConversationEmpty()) {
+        const std::string& conversation = getFullConversation();
         // Only send if we don't already have a pending request for this conversation
         if (!mResponseManager->hasPendingConversation(conversation)) {
             std::string requestId = generateRequestId();
             handleTriggerEvent(conversation, requestId);
+            // Reset counter since we just made a backend call
+            mSentencesSinceLastBackendCall = 0;
         }
     }
 
@@ -135,10 +140,11 @@ bool AiChatClient::isProcessing() const {
 }
 
 void AiChatClient::reset() {
-    mAccumulator->clear();
+    clearConversation();
     mTrigger->reset();
     mResponseManager->clear();
     mState->reset();
+    mSentencesSinceLastBackendCall = 0;
 }
 
 void AiChatClient::updateConfig(const Config& config) {
@@ -269,92 +275,28 @@ AiChatClient::Language AiChatClient::detectLanguage(const std::string& sentence)
 }
 
 // =============================================================================
-// SentenceAccumulator Implementation
+// Conversation Management Methods
 // =============================================================================
 
-AiChatClient::SentenceAccumulator::SentenceAccumulator(size_t maxBufferSize)
-    : mMaxBufferSize(maxBufferSize)
-    , mCurrentMemoryUsage(0)
-{
-    mSentences.reserve(maxBufferSize);
-}
-
-void AiChatClient::SentenceAccumulator::addSentence(const std::string& sentence) {
-    if (sentence.empty()) {
-        return;
-    }
-
-    mSentences.push_back(sentence);
-    mCurrentMemoryUsage += sentence.size();
-
-    enforceMemoryLimit();
-}
-
-std::string AiChatClient::SentenceAccumulator::getFullConversation() const {
-    if (mSentences.empty()) {
-        return "";
-    }
-
-    std::ostringstream oss;
-    for (size_t i = 0; i < mSentences.size(); ++i) {
-        if (i > 0) {
-            oss << " ";
+void AiChatClient::addSentenceToConversation(const std::string& sentence) {
+    if (!sentence.empty()) {
+        if (!mConversation.empty()) {
+            mConversation += " ";
         }
-        oss << mSentences[i];
+        mConversation += sentence;
     }
-    return oss.str();
 }
 
-std::string AiChatClient::SentenceAccumulator::getChunk(size_t chunkSize) const {
-    if (mSentences.empty() || chunkSize == 0) {
-        return "";
-    }
-
-    size_t startIdx = mSentences.size() >= chunkSize ? mSentences.size() - chunkSize : 0;
-
-    std::ostringstream oss;
-    for (size_t i = startIdx; i < mSentences.size(); ++i) {
-        if (i > startIdx) {
-            oss << " ";
-        }
-        oss << mSentences[i];
-    }
-    return oss.str();
+const std::string& AiChatClient::getFullConversation() const {
+    return mConversation;
 }
 
-std::string AiChatClient::SentenceAccumulator::getLastNSentences(size_t count) const {
-    return getChunk(count);
+void AiChatClient::clearConversation() {
+    mConversation.clear();
 }
 
-void AiChatClient::SentenceAccumulator::clear() {
-    mSentences.clear();
-    mCurrentMemoryUsage = 0;
-}
-
-size_t AiChatClient::SentenceAccumulator::size() const {
-    return mSentences.size();
-}
-
-bool AiChatClient::SentenceAccumulator::isEmpty() const {
-    return mSentences.empty();
-}
-
-size_t AiChatClient::SentenceAccumulator::getMemoryUsage() const {
-    return mCurrentMemoryUsage;
-}
-
-void AiChatClient::SentenceAccumulator::enforceMemoryLimit() {
-    // Remove oldest sentences if we exceed memory limit
-    while (mCurrentMemoryUsage > MAX_MEMORY_BYTES && !mSentences.empty()) {
-        mCurrentMemoryUsage -= mSentences.front().size();
-        mSentences.erase(mSentences.begin());
-    }
-
-    // Remove oldest sentences if we exceed buffer size limit
-    while (mSentences.size() > mMaxBufferSize && !mSentences.empty()) {
-        mCurrentMemoryUsage -= mSentences.front().size();
-        mSentences.erase(mSentences.begin());
-    }
+bool AiChatClient::isConversationEmpty() const {
+    return mConversation.empty();
 }
 
 // =============================================================================
@@ -569,9 +511,7 @@ bool AiChatClient::ResponseManager::hasCachedResponse() const {
     return false;
 }
 
-std::string AiChatClient::ResponseManager::getBestResponse() const {
-    return selectBestResponse();
-}
+
 
 std::string AiChatClient::ResponseManager::getMergedResponse() const {
     std::vector<std::string> responses;
@@ -622,20 +562,7 @@ bool AiChatClient::ResponseManager::hasPendingConversation(const std::string& co
     return false;
 }
 
-std::string AiChatClient::ResponseManager::selectBestResponse() const {
-    std::string bestResponse;
-    std::chrono::steady_clock::time_point latestTime;
 
-    for (const auto& pair : mRequests) {
-        if (pair.second.isComplete &&
-            (bestResponse.empty() || pair.second.timestamp > latestTime)) {
-            bestResponse = pair.second.response;
-            latestTime = pair.second.timestamp;
-        }
-    }
-
-    return bestResponse;
-}
 
 bool AiChatClient::ResponseManager::isRequestExpired(const RequestInfo& request) const {
     auto now = std::chrono::steady_clock::now();
@@ -661,12 +588,11 @@ AiChatClient::ConversationState::State AiChatClient::ConversationState::getState
 }
 
 void AiChatClient::ConversationState::markConversationStart() {
-    mStartTime = std::chrono::steady_clock::now();
     setState(State::Accumulating);
 }
 
 void AiChatClient::ConversationState::markConversationEnd() {
-    mEndTime = std::chrono::steady_clock::now();
+    // Nothing to do - just marking the end for state management
 }
 
 void AiChatClient::ConversationState::markProcessingStart() {
@@ -689,14 +615,10 @@ bool AiChatClient::ConversationState::canAcceptSentences() const {
            mCurrentState == State::Processing;
 }
 
-bool AiChatClient::ConversationState::shouldWaitForEnd() const {
-    return mCurrentState == State::WaitingForEnd;
-}
+
 
 void AiChatClient::ConversationState::reset() {
     mCurrentState = State::Idle;
-    mStartTime = {};
-    mEndTime = {};
 }
 
 } // namespace aichat

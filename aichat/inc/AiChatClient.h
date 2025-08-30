@@ -41,7 +41,6 @@ public:
         uint32_t mChunkSize = 3;              // sentences per chunk
         bool mEnableSmartTriggers = true;     // punctuation/pattern triggers
         bool mEnableChunking = true;          // send chunks before end
-        bool mEnablePredictiveCalls = false;  // multiple concurrent calls
         uint32_t mMaxConcurrentCalls = 2;     // limit concurrent backend calls
         Language mLanguage = Language::Auto;  // language for trigger detection
     };
@@ -83,7 +82,6 @@ public:
 
 private:
     // Forward declarations for Pimpl idiom
-    class SentenceAccumulator;
     class BackendTriggerBase;
     class EnglishBackendTrigger;
     class KoreanBackendTrigger;
@@ -91,7 +89,7 @@ private:
     class ConversationState;
 
     // Pimpl idiom for clean interface
-    std::unique_ptr<SentenceAccumulator> mAccumulator;
+    std::string mConversation;
     std::unique_ptr<BackendTriggerBase> mTrigger;
     std::unique_ptr<ResponseManager> mResponseManager;
     std::unique_ptr<ConversationState> mState;
@@ -102,6 +100,9 @@ private:
     ResponseCallback mResponseCallback;
     ErrorCallback mErrorCallback;
 
+    // Chunking state tracking
+    size_t mSentencesSinceLastBackendCall;
+
     // Internal methods
     void handleTriggerEvent(const std::string& conversation, const std::string& triggerId);
     void handleBackendResponse(const std::string& response, const std::string& requestId);
@@ -111,36 +112,15 @@ private:
     std::string generateRequestId() const;
     void createTriggerForLanguage(Language language);
     Language detectLanguage(const std::string& sentence) const;
+
+    // Conversation management helpers
+    void addSentenceToConversation(const std::string& sentence);
+    const std::string& getFullConversation() const;
+    void clearConversation();
+    bool isConversationEmpty() const;
 };
 
-/**
- * @brief Sentence accumulator with smart buffering
- *
- * Manages sentence buffering with 1KB memory limit and provides
- * conversation chunks for backend processing.
- */
-class AiChatClient::SentenceAccumulator {
-public:
-    explicit SentenceAccumulator(size_t maxBufferSize);
 
-    void addSentence(const std::string& sentence);
-    std::string getFullConversation() const;
-    std::string getChunk(size_t chunkSize) const;
-    std::string getLastNSentences(size_t count) const;
-    void clear();
-
-    size_t size() const;
-    bool isEmpty() const;
-    size_t getMemoryUsage() const;
-
-private:
-    std::vector<std::string> mSentences;
-    size_t mMaxBufferSize;
-    size_t mCurrentMemoryUsage;
-
-    void enforceMemoryLimit();
-    static const size_t MAX_MEMORY_BYTES = 1024; // 1KB limit
-};
 
 /**
  * @brief Base class for backend trigger decision engines
@@ -213,7 +193,6 @@ public:
     void invalidateOldRequests();
 
     bool hasCachedResponse() const;
-    std::string getBestResponse() const;
     std::string getMergedResponse() const;
 
     void clear();
@@ -231,7 +210,6 @@ private:
     std::unordered_map<std::string, RequestInfo> mRequests;
     uint32_t mMaxConcurrentCalls;
 
-    std::string selectBestResponse() const;
     bool isRequestExpired(const RequestInfo& request) const;
     static const uint32_t REQUEST_TIMEOUT_MS = 10000; // 10 seconds
 };
@@ -264,14 +242,11 @@ public:
 
     bool isProcessing() const;
     bool canAcceptSentences() const;
-    bool shouldWaitForEnd() const;
 
     void reset();
 
 private:
     State mCurrentState;
-    std::chrono::steady_clock::time_point mStartTime;
-    std::chrono::steady_clock::time_point mEndTime;
 };
 
 } // namespace aichat
