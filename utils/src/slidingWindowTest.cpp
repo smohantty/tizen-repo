@@ -38,7 +38,6 @@ void testBasicSlidingWindow() {
     std::vector<int> frame4 = {13, 14, 15, 16};
     window.addFrame(frame4);
     std::cout << "After frame 4 - Count: " << window.getFrameCount() << std::endl;
-    std::cout << "Dropped frames: " << window.getTotalFramesDropped() << std::endl;
 
     // Access frames
     std::cout << "Oldest frame: ";
@@ -81,7 +80,6 @@ void testSingleItemFrames() {
     window.addFrame("seventh");
 
     std::cout << "After adding more - Count: " << window.getFrameCount() << std::endl;
-    std::cout << "Dropped frames: " << window.getTotalFramesDropped() << std::endl;
 
     // Show all data (flat iteration)
     std::cout << "All data: ";
@@ -110,38 +108,32 @@ void testAudioPreroll() {
         audioWindow.addFrame(audioFrame);
 
         if (i % 5 == 0) {
-            std::cout << "Frame " << i << " - Count: " << audioWindow.getFrameCount()
-                      << ", Dropped: " << audioWindow.getTotalFramesDropped() << std::endl;
+            std::cout << "Frame " << i << " - Count: " << audioWindow.getFrameCount() << std::endl;
         }
     }
 
     std::cout << "Final - Frames: " << audioWindow.getFrameCount()
-              << ", Total items: " << audioWindow.getTotalItems()
-              << ", Drop rate: " << std::fixed << std::setprecision(1)
-              << (audioWindow.getDropRate() * 100) << "%" << std::endl;
+              << ", Total items: " << audioWindow.getTotalItems() << std::endl;
 }
 
 void testStatistics() {
-    std::cout << "\n=== Testing Statistics ===" << std::endl;
+    std::cout << "\n=== Testing Window Operations ===" << std::endl;
 
     SlidingWindow<double, 3> window(10);
 
-    // Add many frames to see statistics
+    // Add many frames
     for (int i = 0; i < 50; ++i) {
         std::vector<double> frame = {i * 1.0, i * 2.0, i * 3.0};
         window.addFrame(frame);
     }
 
-    std::cout << "Total frames added: " << window.getTotalFramesAdded() << std::endl;
-    std::cout << "Total frames dropped: " << window.getTotalFramesDropped() << std::endl;
     std::cout << "Current frame count: " << window.getFrameCount() << std::endl;
-    std::cout << "Drop rate: " << std::fixed << std::setprecision(1)
-              << (window.getDropRate() * 100) << "%" << std::endl;
+    std::cout << "Total items: " << window.getTotalItems() << std::endl;
+    std::cout << "Is full: " << window.isFull() << std::endl;
 
     // Reset and check
     window.reset();
-    std::cout << "After reset - Added: " << window.getTotalFramesAdded()
-              << ", Dropped: " << window.getTotalFramesDropped() << std::endl;
+    std::cout << "After reset - Frame count: " << window.getFrameCount() << std::endl;
 }
 
 void testErrorHandling() {
