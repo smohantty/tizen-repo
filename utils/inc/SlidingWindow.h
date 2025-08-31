@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <stdexcept>
 #include <string>
+#include "Span.h"
 
 namespace utils {
 
@@ -47,14 +48,7 @@ public:
                                       std::to_string(FrameSize) + ", got " +
                                       std::to_string(frame.size()));
         }
-
-        if (isFull()) {
-            // Drop oldest frame by removing first FrameSize elements
-            mData.erase(mData.begin(), mData.begin() + FrameSize);
-        }
-
-        // Add new frame data
-        mData.insert(mData.end(), frame.begin(), frame.end());
+        addFrameInternal(frame.begin(), frame.end());
     }
 
     /**
@@ -68,31 +62,26 @@ public:
                                       std::to_string(FrameSize) + ", got " +
                                       std::to_string(count));
         }
+        addFrameInternal(data, data + count);
+    }
 
-        if (isFull()) {
-            // Drop oldest frame by removing first FrameSize elements
-            mData.erase(mData.begin(), mData.begin() + FrameSize);
-        }
-
-        // Add new frame data
-        mData.insert(mData.end(), data, data + count);
+    template<std::size_t N,
+    typename = std::enable_if_t<N == FrameSize>>
+    constexpr void addFrame(const std::array<T, N>& frame) {
+        addFrameInternal(frame.begin(), frame.end());
     }
 
     /**
-     * @brief Add a frame from std::array (compile-time size check)
-     * @param frame Array of items
+     * @brief Add a frame from Span
+     * @param frame Span containing frame data (must match frame size)
      */
-    template<std::size_t N>
-    constexpr void addFrame(const std::array<T, N>& frame) {
-        static_assert(N == FrameSize, "Frame size mismatch");
-
-        if (isFull()) {
-            // Drop oldest frame by removing first FrameSize elements
-            mData.erase(mData.begin(), mData.begin() + FrameSize);
+    constexpr void addFrame(const Span<T>& frame) {
+        if (frame.size() != FrameSize) {
+            throw std::invalid_argument("Frame size mismatch: expected " +
+                                      std::to_string(FrameSize) + ", got " +
+                                      std::to_string(frame.size()));
         }
-
-        // Add new frame data
-        mData.insert(mData.end(), frame.begin(), frame.end());
+        addFrameInternal(frame.begin(), frame.end());
     }
 
     /**
@@ -149,17 +138,15 @@ public:
     /**
      * @brief Get a view of a specific frame (no copy)
      * @param index Frame index (0 = oldest, getFrameCount()-1 = newest)
-     * @return Pair of iterators representing the frame range
+     * @return Span representing the frame data
      */
-    constexpr std::pair<typename std::vector<T>::const_iterator,
-                       typename std::vector<T>::const_iterator>
-    getFrameView(size_type index) const {
+    constexpr Span<const T> getFrameView(size_type index) const {
         if (index >= getFrameCount()) {
             throw std::out_of_range("Frame index out of range");
         }
 
         size_type startIndex = index * FrameSize;
-        return {mData.begin() + startIndex, mData.begin() + startIndex + FrameSize};
+        return Span<const T>(mData.data() + startIndex, FrameSize);
     }
 
     /**
@@ -241,6 +228,22 @@ public:
     constexpr auto crend() const noexcept { return mData.crend(); }
 
 private:
+    /**
+     * @brief Internal method to add frame data from iterators
+     * @param begin Iterator to start of frame data
+     * @param end Iterator to end of frame data
+     */
+    template<typename Iterator>
+    constexpr void addFrameInternal(Iterator begin, Iterator end) {
+        if (isFull()) {
+            // Drop oldest frame by removing first FrameSize elements
+            mData.erase(mData.begin(), mData.begin() + FrameSize);
+        }
+
+        // Add new frame data
+        mData.insert(mData.end(), begin, end);
+    }
+
     std::vector<T> mData;
     size_type mWindowSize;
 };

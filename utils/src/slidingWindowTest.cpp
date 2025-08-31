@@ -1,4 +1,5 @@
 #include "SlidingWindow.h"
+#include "Span.h"
 #include <iostream>
 #include <vector>
 #include <array>
@@ -217,17 +218,17 @@ void testFrameView() {
 
     std::cout << "Frame views (no copy):" << std::endl;
     for (size_t i = 0; i < window.getFrameCount(); ++i) {
-        auto [begin, end] = window.getFrameView(i);
+        auto frameSpan = window.getFrameView(i);
         std::cout << "Frame " << i << ": ";
-        for (auto it = begin; it != end; ++it) {
-            std::cout << *it << " ";
+        for (int item : frameSpan) {
+            std::cout << item << " ";
         }
         std::cout << std::endl;
     }
 
     // Test with algorithms
-    auto [begin, end] = window.getFrameView(1);
-    auto maxElement = std::max_element(begin, end);
+    auto frameSpan = window.getFrameView(1);
+    auto maxElement = std::max_element(frameSpan.begin(), frameSpan.end());
     std::cout << "Max element in frame 1: " << *maxElement << std::endl;
 }
 
@@ -275,6 +276,48 @@ void testStdArraySupport() {
     std::cout << std::endl;
 }
 
+void testSpanSupport() {
+    std::cout << "\n=== Testing Span Support ===" << std::endl;
+
+    SlidingWindow<int, 3> window(2);
+
+    // Add frames using Span
+    std::vector<int> data1 = {1, 2, 3};
+    std::vector<int> data2 = {4, 5, 6};
+
+    Span<int> span1(data1);
+    Span<int> span2(data2);
+
+    window.addFrame(span1);
+    window.addFrame(span2);
+
+    std::cout << "Added frames using Span" << std::endl;
+    std::cout << "Frame count: " << window.getFrameCount() << std::endl;
+
+    // Test with raw data
+    int rawData[] = {7, 8, 9};
+    Span<int> span3(rawData);
+    window.addFrame(span3);
+
+    std::cout << "After adding raw data span - Frame count: " << window.getFrameCount() << std::endl;
+
+    // Test error handling with wrong size
+    try {
+        std::vector<int> wrongData = {1, 2}; // Wrong size
+        Span<int> wrongSpan(wrongData);
+        window.addFrame(wrongSpan);
+        std::cout << "Error: Should have thrown exception" << std::endl;
+    } catch (const std::invalid_argument& e) {
+        std::cout << "Caught expected exception: " << e.what() << std::endl;
+    }
+
+    std::cout << "All data: ";
+    for (int item : window) {
+        std::cout << item << " ";
+    }
+    std::cout << std::endl;
+}
+
 void testCompileTimeFeatures() {
     std::cout << "\n=== Testing Compile-time Features ===" << std::endl;
 
@@ -303,6 +346,7 @@ int main() {
         testFrameView();
         testDirectAccess();
         testStdArraySupport();
+        testSpanSupport();
         testCompileTimeFeatures();
 
         std::cout << "\n=== All SlidingWindow tests completed successfully! ===" << std::endl;
