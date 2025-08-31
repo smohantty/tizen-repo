@@ -133,7 +133,7 @@ int main() {
     config.bitsPerSample = 16;
     config.channels = 1;
     config.chunkDurationMs = 20;
-    config.ringBufferSize = 1024 * 1024; // 1MB buffer
+
 
     // Create components
     auto listener = std::make_shared<ExampleListener>();

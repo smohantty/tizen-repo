@@ -31,7 +31,6 @@ inc = include_directories('inc')
 # Source files
 sources = [
   'src/AudioStreaming.cpp',
-  'src/RingBuffer.cpp',
   'src/JsonFormatter.cpp'
 ]
 
@@ -41,7 +40,6 @@ headers = [
   'inc/AudioStreamingConfig.h',
   'inc/IAudioStreamingListener.h',
   'inc/Message.h',
-  'inc/RingBuffer.h',
   'inc/JsonFormatter.h'
 ]
 
@@ -100,11 +98,7 @@ if get_option('tests')
     install : false
   )
 
-  test_ring_buffer = executable('test_ring_buffer',
-    'test/test_ring_buffer.cpp',
-    dependencies : edgeprocessor_dep,
-    install : false
-  )
+
 
   test_json_formatter = executable('test_json_formatter',
     'test/test_json_formatter.cpp',
@@ -114,7 +108,6 @@ if get_option('tests')
 
   # Run all tests
   test('test_audio_streaming', test_audio_streaming)
-  test('test_ring_buffer', test_ring_buffer)
   test('test_json_formatter', test_json_formatter)
 endif
 

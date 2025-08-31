@@ -1,7 +1,7 @@
 #include "AudioStreaming.h"
 #include "Message.h"
-#include "RingBuffer.h"
 #include "JsonFormatter.h"
+#include "../src/json.hpp"
 #include <queue>
 #include <mutex>
 #include <thread>
@@ -10,6 +10,8 @@
 #include <algorithm>
 #include <utility>
 #include <variant>
+
+using json = nlohmann::json;
 
 namespace edgeprocessor {
 
@@ -29,7 +31,7 @@ public:
         : mConfig(std::move(config))
         , mListener(std::move(listener))
         , mTransportAdapter(std::move(transportAdapter))
-        , mRingBuffer(mConfig.ringBufferSize)
+
         , mState(State::Idle)
         , mSequenceNumber(0)
         , mRunning(false) {
@@ -73,16 +75,9 @@ public:
             return;
         }
 
-        // Write to ring buffer
-        size_t written = mRingBuffer.write(data, bytes);
-        if (written == 0) {
-            // Buffer is full, drop the data
-            return;
-        }
-
-        // Enqueue continue command with the written data
+        // Enqueue continue command with the PCM data
         std::vector<uint8_t> pcmData(static_cast<const uint8_t*>(data),
-                                    static_cast<const uint8_t*>(data) + written);
+                                    static_cast<const uint8_t*>(data) + bytes);
         enqueueMessage(CmdContinue{std::move(pcmData), ptsMs});
     }
 
@@ -327,25 +322,30 @@ private:
         }
     }
 
-    void handleIncomingMessage(const std::string& json) {
+    void handleIncomingMessage(const std::string& jsonStr) {
         try {
-            // Simple message type detection
-            if (json.find("\"type\":\"partial\"") != std::string::npos) {
-                enqueueMessage(mJsonFormatter.parsePartial(json));
-            } else if (json.find("\"type\":\"final\"") != std::string::npos) {
-                enqueueMessage(mJsonFormatter.parseFinal(json));
-            } else if (json.find("\"type\":\"latency\"") != std::string::npos) {
-                enqueueMessage(mJsonFormatter.parseLatency(json));
-            } else if (json.find("\"type\":\"status\"") != std::string::npos) {
-                enqueueMessage(mJsonFormatter.parseStatus(json));
-            } else if (json.find("\"type\":\"error\"") != std::string::npos) {
-                enqueueMessage(mJsonFormatter.parseError(json));
+            // Properly decode JSON to get message type
+            json j = json::parse(jsonStr);
+            std::string type = j.value("type", "");
+
+            if (type == "partial") {
+                enqueueMessage(mJsonFormatter.parsePartial(jsonStr));
+            } else if (type == "final") {
+                enqueueMessage(mJsonFormatter.parseFinal(jsonStr));
+            } else if (type == "latency") {
+                enqueueMessage(mJsonFormatter.parseLatency(jsonStr));
+            } else if (type == "status") {
+                enqueueMessage(mJsonFormatter.parseStatus(jsonStr));
+            } else if (type == "error") {
+                enqueueMessage(mJsonFormatter.parseError(jsonStr));
             } else {
                 // Unknown message type, treat as status
-                enqueueMessage(EvStatus{json});
+                enqueueMessage(EvStatus{jsonStr});
             }
-        } catch (const std::exception& e) {
+        } catch (const json::exception& e) {
             enqueueMessage(EvError{std::string("JSON parse error: ") + e.what()});
+        } catch (const std::exception& e) {
+            enqueueMessage(EvError{std::string("General error: ") + e.what()});
         }
     }
 
@@ -364,7 +364,7 @@ private:
     AudioStreamingConfig mConfig;
     std::shared_ptr<IAudioStreamingListener> mListener;
     std::shared_ptr<ITransportAdapter> mTransportAdapter;
-    RingBuffer mRingBuffer;
+
     JsonFormatter mJsonFormatter;
 
     State mState;
