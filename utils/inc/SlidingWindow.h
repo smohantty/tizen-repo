@@ -20,9 +20,7 @@ public:
      * @param windowSize Maximum number of frames the window can hold
      */
     constexpr SlidingWindow(size_type windowSize)
-        : mWindowSize(windowSize)
-        , mTotalFramesAdded(0)
-        , mTotalFramesDropped(0) {
+        : mWindowSize(windowSize) {
         if (windowSize == 0) {
             throw std::invalid_argument("Window size must be greater than 0");
         }
@@ -53,12 +51,10 @@ public:
         if (isFull()) {
             // Drop oldest frame by removing first FrameSize elements
             mData.erase(mData.begin(), mData.begin() + FrameSize);
-            mTotalFramesDropped++;
         }
 
         // Add new frame data
         mData.insert(mData.end(), frame.begin(), frame.end());
-        mTotalFramesAdded++;
     }
 
     /**
@@ -76,12 +72,10 @@ public:
         if (isFull()) {
             // Drop oldest frame by removing first FrameSize elements
             mData.erase(mData.begin(), mData.begin() + FrameSize);
-            mTotalFramesDropped++;
         }
 
         // Add new frame data
         mData.insert(mData.end(), data, data + count);
-        mTotalFramesAdded++;
     }
 
     /**
@@ -95,12 +89,10 @@ public:
         if (isFull()) {
             // Drop oldest frame by removing first FrameSize elements
             mData.erase(mData.begin(), mData.begin() + FrameSize);
-            mTotalFramesDropped++;
         }
 
         // Add new frame data
         mData.insert(mData.end(), frame.begin(), frame.end());
-        mTotalFramesAdded++;
     }
 
     /**
@@ -113,11 +105,9 @@ public:
         if (isFull()) {
             // Drop oldest item
             mData.erase(mData.begin());
-            mTotalFramesDropped++;
         }
 
         mData.push_back(item);
-        mTotalFramesAdded++;
     }
 
     /**
@@ -220,30 +210,7 @@ public:
         return mData.size();
     }
 
-    /**
-     * @brief Get total frames added since creation
-     * @return Total frames added
-     */
-    constexpr size_type getTotalFramesAdded() const noexcept {
-        return mTotalFramesAdded;
-    }
 
-    /**
-     * @brief Get total frames dropped since creation
-     * @return Total frames dropped
-     */
-    constexpr size_type getTotalFramesDropped() const noexcept {
-        return mTotalFramesDropped;
-    }
-
-    /**
-     * @brief Get drop rate (dropped / (added + dropped))
-     * @return Drop rate as percentage
-     */
-    constexpr double getDropRate() const noexcept {
-        size_type total = mTotalFramesAdded + mTotalFramesDropped;
-        return total > 0 ? static_cast<double>(mTotalFramesDropped) / total : 0.0;
-    }
 
     /**
      * @brief Clear all frames from window
@@ -253,12 +220,10 @@ public:
     }
 
     /**
-     * @brief Reset window and statistics
+     * @brief Reset window
      */
     constexpr void reset() noexcept {
         mData.clear();
-        mTotalFramesAdded = 0;
-        mTotalFramesDropped = 0;
     }
 
     // Direct access to data (for algorithms)
@@ -278,8 +243,6 @@ public:
 private:
     std::vector<T> mData;
     size_type mWindowSize;
-    size_type mTotalFramesAdded;
-    size_type mTotalFramesDropped;
 };
 
 } // namespace utils
