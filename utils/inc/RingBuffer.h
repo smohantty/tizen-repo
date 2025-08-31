@@ -1,5 +1,4 @@
-#ifndef RINGBUFFER_H
-#define RINGBUFFER_H
+#pragma once
 
 #include <cstddef>
 #include <memory>
@@ -87,5 +86,3 @@ private:
 };
 
 } // namespace utils
-
-#endif // RINGBUFFER_H

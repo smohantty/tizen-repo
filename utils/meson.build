@@ -1,4 +1,4 @@
-project('utils', 'cpp',
+project('utilsTest', 'cpp',
   version : '1.0.0',
   default_options : [
     'warning_level=3',
@@ -9,12 +9,15 @@ project('utils', 'cpp',
 # Include directories
 inc_dirs = include_directories('inc')
 
-# RingBuffer library
-ringBuffer_lib = static_library('ringbuffer',
+# utils library
+utils_lib = static_library('utils',
   'src/RingBuffer.cpp',
   include_directories : inc_dirs,
   install : false
 )
+
+
+
 
 # Executables
 executable(
@@ -31,6 +34,25 @@ executable(
     'src/ringBufferTest.cpp'
   )],
   include_directories : inc_dirs,
-  link_with : ringBuffer_lib,
+  link_with : utils_lib,
+  install : false
+)
+
+executable(
+  'spanTest',
+  [files(
+    'src/spanTest.cpp'
+  )],
+  include_directories : inc_dirs,
+  link_with : utils_lib,
+  install : false
+)
+executable(
+  'slidingWindowTest',
+  [files(
+    'src/slidingWindowTest.cpp'
+  )],
+  include_directories : inc_dirs,
+  link_with : utils_lib,
   install : false
 )
