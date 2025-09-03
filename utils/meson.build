@@ -11,7 +11,7 @@ inc_dirs = include_directories('inc')
 
 # utils library
 utils_lib = static_library('utils',
-  'src/RingBuffer.cpp',
+  'src/Base64.cpp',
   include_directories : inc_dirs,
   install : false
 )
@@ -29,16 +29,6 @@ executable(
 )
 
 executable(
-  'ringBufferTest',
-  [files(
-    'src/ringBufferTest.cpp'
-  )],
-  include_directories : inc_dirs,
-  link_with : utils_lib,
-  install : false
-)
-
-executable(
   'spanTest',
   [files(
     'src/spanTest.cpp'
@@ -51,6 +41,16 @@ executable(
   'slidingWindowTest',
   [files(
     'src/slidingWindowTest.cpp'
+  )],
+  include_directories : inc_dirs,
+  link_with : utils_lib,
+  install : false
+)
+
+executable(
+  'base64Test',
+  [files(
+    'src/base64Test.cpp'
   )],
   include_directories : inc_dirs,
   link_with : utils_lib,
