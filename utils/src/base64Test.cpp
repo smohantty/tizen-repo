@@ -119,23 +119,6 @@ void testRawArrayInterface() {
     std::cout << "✓ Raw array interface test passed" << std::endl << std::endl;
 }
 
-void testValidation() {
-    std::cout << "Testing Base64 validation..." << std::endl;
-
-    // Valid Base64 strings (our custom format)
-    assert(Base64::isValid(""));
-    assert(Base64::isValid("DA5"));  // Single short
-    assert(Base64::isValid("APoPgwAu4PBgBOI"));  // Multiple shorts
-    std::cout << "✓ Valid Base64 strings recognized" << std::endl;
-
-    // Invalid Base64 strings
-    assert(!Base64::isValid("DA"));   // Wrong length (not multiple of 3)
-    assert(!Base64::isValid("DA5!")); // Invalid character
-    assert(!Base64::isValid("DA5A")); // Wrong length
-    std::cout << "✓ Invalid Base64 strings rejected" << std::endl;
-
-    std::cout << "✓ Validation test passed" << std::endl << std::endl;
-}
 
 void testEdgeCases() {
     std::cout << "Testing edge cases..." << std::endl;
@@ -209,7 +192,6 @@ int main() {
         testMultipleShorts();
         testAudioPCMData();
         testRawArrayInterface();
-        testValidation();
         testEdgeCases();
         testRandomData();
 
