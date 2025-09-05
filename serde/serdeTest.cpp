@@ -6,7 +6,7 @@
 // POD + string + vector struct
 struct MyData {
     std::string name;
-    std::vector<int> values;
+    std::vector<float> values;
     std::vector<std::string> labels;
     float score;
 
@@ -45,8 +45,8 @@ struct Profiles {
 
 int main() {
     Profiles profiles;
-    profiles.users.push_back({"Alice", {1,2,3}, {"one","two"}, 9.5f});
-    profiles.users.push_back({"Bob", {4,5,6}, {"four","five"}, 8.2f});
+    profiles.users.push_back({"Alice", {1.2,2.43,3.6}, {"one","two"}, 9.5f});
+    profiles.users.push_back({"Bob", {4.5,5.6,6.7}, {"four","five"}, 8.2f});
 
     // Serialize
     auto buf = serde::serialize(profiles);
