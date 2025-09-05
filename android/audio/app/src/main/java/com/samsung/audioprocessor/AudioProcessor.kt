@@ -48,27 +48,11 @@ class AudioProcessor(
                         transitionToState(State.STREAMING_REQUEST)
                     }
                     State.STREAMING -> {
-                        // Process packets continuously until END packet or queue is empty
-                        while (scope.isActive && state.get() == State.STREAMING) {
-                            try {
-                                val packet = queue.receive()
-                                when (packet.tag) {
-                                        Tag.START ->  processAudioData(packet.buffer)
-                                        Tag.CONTINUE -> processAudioData(packet.buffer)
-                                        Tag.END -> {
-                                           startProcessing()
-                                           transitionToState(State.PROCESSING)
-                                        }
-                                    }
-                            } catch (e: kotlinx.coroutines.channels.ClosedReceiveChannelException) {
-                                // Queue is closed, break out of inner loop
-                                break
-                            }
-                        }
+                        handleStreamingState()
                     }
                     State.PROCESSING -> {
-                        // Do nothing and wait until state becomes READY or STREAMING
-                        delay(10)
+                        // Just transition to READY - cleanup is not needed
+                        transitionToState(State.READY)
                     }
                     else -> {
                         // For other states, wait a bit before checking again
@@ -81,6 +65,26 @@ class AudioProcessor(
         }
     }
 
+    private suspend fun handleStreamingState() {
+        // Process packets continuously until END packet or queue is empty
+        while (scope.isActive && state.get() == State.STREAMING) {
+            try {
+                val packet = queue.receive()
+                when (packet.tag) {
+                    Tag.START -> processAudioData(packet.buffer)
+                    Tag.CONTINUE -> processAudioData(packet.buffer)
+                    Tag.END -> {
+                        processAudioData(packet.buffer)
+                        startProcessing()
+                        transitionToState(State.PROCESSING)
+                    }
+                }
+            } catch (e: kotlinx.coroutines.channels.ClosedReceiveChannelException) {
+                // Queue is closed, break out of inner loop
+                break
+            }
+        }
+    }
 
     private suspend fun processAudioData(buffer: ByteArray) {
         try {
@@ -130,18 +134,6 @@ class AudioProcessor(
         }
     }
 
-    private fun cleanup() {
-        try {
-            isProcessing = false
-            outputStream?.close()
-            inputStream?.close()
-            outputStream = null
-            inputStream = null
-            Log.d("AudioProcessor", "Cleanup completed")
-        } catch (e: Exception) {
-            Log.e("AudioProcessor", "Error during cleanup: ${e.message}")
-        }
-    }
 
     fun getCurrentState(): State = state.get()
 
@@ -156,7 +148,6 @@ class AudioProcessor(
     fun stop() {
         scope.cancel()
         queue.close()
-        cleanup()
         transitionToState(State.READY)
     }
 }
