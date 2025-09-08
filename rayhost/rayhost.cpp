@@ -143,7 +143,6 @@ public:
             std::cout << Colors::BRIGHT_YELLOW << "\"" << trainingSentences[i] << "\"" << Colors::RESET << std::endl;
 
             std::cout << "\n" << Colors::BRIGHT_CYAN << "Press Enter when you're ready to record..." << Colors::RESET;
-            std::cin.ignore();
             std::cin.get();
 
             std::cout << "\n" << Colors::BRIGHT_YELLOW << "📢 Get ready to speak in:" << Colors::RESET << std::endl;
@@ -163,7 +162,6 @@ public:
 
             if (i < 2) {
                 std::cout << "\n" << Colors::BRIGHT_BLUE << "Press Enter to continue to next sentence..." << Colors::RESET;
-                std::cin.ignore();
                 std::cin.get();
             }
         }
