@@ -124,23 +124,65 @@ public:
         UIHelper::printSeparator();
 
         UIHelper::printInfo("Registering voice profile: " + Colors::BRIGHT_WHITE + profileName + Colors::RESET);
-        UIHelper::printInfo("Please speak your passphrase when prompted...");
+        UIHelper::printInfo("You will be asked to record 3 sentences for voice training.");
 
-        std::cout << "\n" << Colors::BRIGHT_YELLOW << "📢 Get ready to speak in:" << Colors::RESET << std::endl;
-        for (int i = 3; i > 0; --i) {
-            std::cout << Colors::BRIGHT_RED << "   " << i << "..." << Colors::RESET << std::endl;
-            std::this_thread::sleep_for(std::chrono::seconds(1));
+        // Define the 3 sentences for voice training
+        std::vector<std::string> trainingSentences = {
+            "The quick brown fox jumps over the lazy dog.",
+            "Hello, my name is " + profileName + " and I am registering my voice.",
+            "This is my third and final sentence for voice profile training."
+        };
+
+        std::vector<std::vector<short>> recordedAudio; // Store recorded audio data
+
+        for (int i = 0; i < 3; ++i) {
+            std::cout << "\n" << Colors::BRIGHT_MAGENTA << "📝 SENTENCE " << (i + 1) << " OF 3" << Colors::RESET << std::endl;
+            UIHelper::printSeparator();
+
+            std::cout << Colors::BRIGHT_WHITE << "Please read this sentence clearly:" << Colors::RESET << std::endl;
+            std::cout << Colors::BRIGHT_YELLOW << "\"" << trainingSentences[i] << "\"" << Colors::RESET << std::endl;
+
+            std::cout << "\n" << Colors::BRIGHT_CYAN << "Press Enter when you're ready to record..." << Colors::RESET;
+            std::cin.ignore();
+            std::cin.get();
+
+            std::cout << "\n" << Colors::BRIGHT_YELLOW << "📢 Get ready to speak in:" << Colors::RESET << std::endl;
+            for (int j = 3; j > 0; --j) {
+                std::cout << Colors::BRIGHT_RED << "   " << j << "..." << Colors::RESET << std::endl;
+                std::this_thread::sleep_for(std::chrono::seconds(1));
+            }
+
+            UIHelper::printProgress("Recording sentence " + std::to_string(i + 1) + "...");
+
+            // TODO: Implement actual audio recording
+            // This is where you would integrate with your audio capture system
+            std::vector<short> audioData = recordAudio(5); // Record for 5 seconds
+            recordedAudio.push_back(audioData);
+
+            UIHelper::printSuccess("Sentence " + std::to_string(i + 1) + " recorded successfully!");
+
+            if (i < 2) {
+                std::cout << "\n" << Colors::BRIGHT_BLUE << "Press Enter to continue to next sentence..." << Colors::RESET;
+                std::cin.ignore();
+                std::cin.get();
+            }
         }
 
-        UIHelper::printProgress("Recording audio for 5 seconds");
-        UIHelper::printLoadingDots(2);
+        UIHelper::printProgress("Processing voice characteristics from all recordings...");
+        UIHelper::printLoadingDots(3);
 
-        UIHelper::printProgress("Processing voice characteristics");
-        UIHelper::printLoadingDots(2);
+        // TODO: Implement voice feature extraction and storage
+        bool success = processAndStoreVoiceProfile(profileName, recordedAudio, trainingSentences);
 
-        UIHelper::printSuccess("Voice profile '" + profileName + "' registered successfully!");
-        mProfiles[profileName] = true;
-        return true;
+        if (success) {
+            UIHelper::printSuccess("Voice profile '" + profileName + "' registered successfully!");
+            std::cout << Colors::BRIGHT_GREEN << "🎉 Your voice has been trained with 3 sentences!" << Colors::RESET << std::endl;
+            mProfiles[profileName] = true;
+            return true;
+        } else {
+            UIHelper::printError("Failed to process voice profile. Please try again.");
+            return false;
+        }
     }
 
     bool verifyVoiceProfile(const std::string& profileName) {
@@ -236,6 +278,78 @@ public:
 
 private:
     std::map<std::string, bool> mProfiles;
+
+    // Skeleton functions for audio recording and processing
+    std::vector<short> recordAudio(int durationSeconds) {
+        // TODO: Implement actual audio recording
+        // This function should:
+        // 1. Initialize audio capture (microphone)
+        // 2. Record audio for the specified duration
+        // 3. Return the raw audio data as vector<short>
+
+        std::cout << Colors::BRIGHT_MAGENTA << "🎙️  Recording audio for " << durationSeconds << " seconds..." << Colors::RESET << std::endl;
+
+        // Simulate recording time
+        UIHelper::printLoadingDots(durationSeconds);
+
+        // Return dummy audio data (in real implementation, this would be actual audio samples)
+        std::vector<short> dummyAudio(durationSeconds * 16000, 0); // 16kHz sample rate
+        return dummyAudio;
+    }
+
+    bool processAndStoreVoiceProfile(const std::string& profileName,
+                                   const std::vector<std::vector<short>>& audioData,
+                                   const std::vector<std::string>& sentences) {
+        // TODO: Implement voice feature extraction and storage
+        // This function should:
+        // 1. Extract voice features from the recorded audio (MFCC, pitch, formants, etc.)
+        // 2. Create a voice model/template
+        // 3. Store the voice profile data (file, database, etc.)
+        // 4. Return true if successful, false otherwise
+
+        std::cout << Colors::BRIGHT_CYAN << "🔬 Extracting voice features..." << Colors::RESET << std::endl;
+        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+
+        std::cout << Colors::BRIGHT_CYAN << "📊 Analyzing voice characteristics..." << Colors::RESET << std::endl;
+        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+
+        std::cout << Colors::BRIGHT_CYAN << "💾 Storing voice profile data..." << Colors::RESET << std::endl;
+        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+
+        // TODO: Implement actual voice processing:
+        // - Extract MFCC features
+        // - Calculate pitch and formant frequencies
+        // - Create voice template/model
+        // - Save to file or database
+
+        // For now, just simulate success
+        return true;
+    }
+
+    std::vector<float> extractVoiceFeatures(const std::vector<short>& audioData) {
+        // TODO: Implement voice feature extraction
+        // This function should extract features like:
+        // - MFCC (Mel-frequency cepstral coefficients)
+        // - Pitch/F0 (fundamental frequency)
+        // - Formant frequencies (F1, F2, F3)
+        // - Spectral features
+        // - Prosodic features (rhythm, stress patterns)
+
+        std::vector<float> features;
+        // TODO: Add actual feature extraction logic here
+        return features;
+    }
+
+    bool saveVoiceProfile(const std::string& profileName, const std::vector<float>& features) {
+        // TODO: Implement voice profile storage
+        // This function should save the voice profile to:
+        // - A file (JSON, binary, etc.)
+        // - A database
+        // - Encrypted storage for security
+
+        // TODO: Add actual storage logic here
+        return true;
+    }
 };
 
 class MenuApp {
