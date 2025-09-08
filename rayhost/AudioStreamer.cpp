@@ -44,6 +44,12 @@ public:
         }
     }
 
+    void clearQueue() {
+        std::unique_lock<std::mutex> lock(mMtx);
+        std::queue<std::vector<short>> emptyQueue;
+        std::swap(mQueue, emptyQueue);
+    }
+
     bool popChunk(std::vector<short>& outChunk) {
         std::unique_lock<std::mutex> lock(mMtx);
         mCv.wait(lock, [this] { return !mQueue.empty() || !mRunning; });
