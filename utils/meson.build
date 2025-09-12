@@ -56,3 +56,12 @@ executable(
   link_with : utils_lib,
   install : false
 )
+
+executable(
+  'serdeTest',
+  [files(
+    'src/serdeTest.cpp'
+  )],
+  include_directories : inc_dirs,
+  install : false
+)
