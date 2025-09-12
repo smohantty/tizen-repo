@@ -29,30 +29,45 @@ namespace utils {
  *
  * For user-defined structs:
  * @code
- * struct MyStruct {
- *     int x;
- *     float y;
- *     std::string name;
+ * struct Point {
+ *     float x, y;
  *
  *     void serialize(std::vector<uint8_t>& buffer) const {
  *         serde::write(buffer, x);
  *         serde::write(buffer, y);
- *         serde::write(buffer, name);
  *     }
  *
  *     void deserialize(const std::vector<uint8_t>& buffer, std::size_t& offset) {
  *         serde::read(buffer, offset, x);
  *         serde::read(buffer, offset, y);
+ *     }
+ * };
+ *
+ * struct Shape {
+ *     std::string name;
+ *     std::vector<Point> vertices;  // Vector of custom type
+ *     int color;
+ *
+ *     void serialize(std::vector<uint8_t>& buffer) const {
+ *         serde::write(buffer, name);
+ *         serde::write(buffer, vertices);  // Automatically handles vector of custom types
+ *         serde::write(buffer, color);
+ *     }
+ *
+ *     void deserialize(const std::vector<uint8_t>& buffer, std::size_t& offset) {
  *         serde::read(buffer, offset, name);
+ *         serde::read(buffer, offset, vertices);  // Automatically handles vector of custom types
+ *         serde::read(buffer, offset, color);
  *     }
  * };
  * @endcode
  *
- * For vectors:
+ * For complex nested structures:
  * @code
- * std::vector<MyStruct> data = {MyStruct{1, 2.0f, "test"}};
- * serde::saveToFile("vector_data.bin", data);
- * auto loaded = serde::loadFromFile<std::vector<MyStruct>>("vector_data.bin");
+ * Shape triangle{"Triangle", {{0.0f, 0.0f}, {1.0f, 0.0f}, {0.5f, 1.0f}}, 0xFF0000};
+ * std::vector<Shape> shapes = {triangle};
+ * serde::saveToFile("shapes.bin", shapes);
+ * auto loaded = serde::loadFromFile<std::vector<Shape>>("shapes.bin");
  * @endcode
  */
 namespace serde {

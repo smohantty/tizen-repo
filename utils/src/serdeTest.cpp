@@ -440,7 +440,7 @@ void testComplexDepartmentStruct() {
     assert(dept == deptResult);
 
     // Test file I/O
-saveToFile("test_department.bin", dept);
+    saveToFile("test_department.bin", dept);
     auto loadedDept = loadFromFile<Department>("test_department.bin");
     assert(dept == loadedDept);
 
@@ -448,11 +448,96 @@ saveToFile("test_department.bin", dept);
     Department dept2("Sales", {alice}, {}, {emp1}, {50000});
     std::vector<Department> company = {dept, dept2};
 
-saveToFile("test_company.bin", company);
+    saveToFile("test_company.bin", company);
     auto loadedCompany = loadFromFile<std::vector<Department>>("test_company.bin");
     assert(company == loadedCompany);
 
     std::cout << "Complex Department struct test passed!\n";
+}
+
+// Example from documentation: Point and Shape structs
+struct Point {
+    float mX, mY;
+
+    Point() = default;
+    Point(float x, float y) : mX(x), mY(y) {}
+
+    void serialize(std::vector<uint8_t>& buffer) const {
+        write(buffer, mX);
+        write(buffer, mY);
+    }
+
+    void deserialize(const std::vector<uint8_t>& buffer, std::size_t& offset) {
+        read(buffer, offset, mX);
+        read(buffer, offset, mY);
+    }
+
+    bool operator==(const Point& other) const {
+        return mX == other.mX && mY == other.mY;
+    }
+};
+
+struct Shape {
+    std::string mName;
+    std::vector<Point> mVertices;  // Vector of custom type
+    int mColor;
+
+    Shape() = default;
+    Shape(const std::string& name, const std::vector<Point>& vertices, int color)
+        : mName(name), mVertices(vertices), mColor(color) {}
+
+    void serialize(std::vector<uint8_t>& buffer) const {
+        write(buffer, mName);
+        write(buffer, mVertices);  // Automatically handles vector of custom types
+        write(buffer, mColor);
+    }
+
+    void deserialize(const std::vector<uint8_t>& buffer, std::size_t& offset) {
+        read(buffer, offset, mName);
+        read(buffer, offset, mVertices);  // Automatically handles vector of custom types
+        read(buffer, offset, mColor);
+    }
+
+    bool operator==(const Shape& other) const {
+        return mName == other.mName &&
+               mVertices == other.mVertices &&
+               mColor == other.mColor;
+    }
+};
+
+void testNestedCustomTypes() {
+    std::cout << "Testing nested custom types (Point and Shape)...\n";
+
+    // Create test data as shown in documentation
+    Point p1(0.0f, 0.0f);
+    Point p2(1.0f, 0.0f);
+    Point p3(0.5f, 1.0f);
+
+    Shape triangle("Triangle", {p1, p2, p3}, 0xFF0000);
+    Shape square("Square", {{0.0f, 0.0f}, {1.0f, 0.0f}, {1.0f, 1.0f}, {0.0f, 1.0f}}, 0x00FF00);
+
+    // Test single shape
+    auto triangleBuffer = serialize(triangle);
+    auto triangleResult = deserialize<Shape>(triangleBuffer);
+    assert(triangle == triangleResult);
+
+    // Test vector of shapes
+    std::vector<Shape> shapes = {triangle, square};
+    auto shapesBuffer = serialize(shapes);
+    auto shapesResult = deserialize<std::vector<Shape>>(shapesBuffer);
+    assert(shapes == shapesResult);
+
+    // Test file I/O as shown in documentation
+    saveToFile("shapes.bin", shapes);
+    auto loadedShapes = loadFromFile<std::vector<Shape>>("shapes.bin");
+    assert(shapes == loadedShapes);
+
+    // Test individual shape file I/O
+    saveToFile("triangle.bin", triangle);
+    auto loadedTriangle = loadFromFile<Shape>("triangle.bin");
+    assert(triangle == loadedTriangle);
+
+    std::cout << "Nested custom types test passed!\n";
 }
 
 void testUtilityFunctions() {
@@ -483,7 +568,8 @@ void cleanupTestFiles() {
         "test_person.bin", "test_people.bin", "test_team.bin",
         "test_teams.bin", "utility_test.bin", "test_typedef.bin",
         "test_employee.bin", "test_employees.bin", "test_person_list.bin",
-        "test_team_list.bin", "test_department.bin", "test_company.bin"
+        "test_team_list.bin", "test_department.bin", "test_company.bin",
+        "shapes.bin", "triangle.bin"
     };
 
     for (const auto& file : testFiles) {
@@ -504,6 +590,7 @@ int main() {
         testEmployeeStruct();
         testVectorsOfCustomTypes();
         testComplexDepartmentStruct();
+        testNestedCustomTypes();
         testUtilityFunctions();
 
         std::cout << "\n=== All tests passed! ===\n";
