@@ -106,18 +106,21 @@ void Timer::update() {
     // Get current time for comparison
     auto current_time = std::chrono::steady_clock::now();
 
+    // Store expired timers to execute their callbacks after heap manipulation
+    std::vector<Callback> callbacks_to_execute;
+
     // Store repeating timers that need to be re-added
     std::vector<std::unique_ptr<Impl::TimerNode>> repeating_timers_to_readd;
 
-    // Process all expired timers
+    // First pass: collect all expired timers and prepare repeating timers
     while (!pImpl->timer_heap.empty()) {
         const auto& next_timer = pImpl->timer_heap.top();
 
         // Check if this timer has expired
         if (next_timer->expiry_time <= current_time) {
-            // Call the callback function before removing from heap
+            // Store the callback for later execution
             if (next_timer->callback) {
-                next_timer->callback();
+                callbacks_to_execute.push_back(next_timer->callback);
             }
 
             // If it's a repeating timer, prepare to re-add it
@@ -141,9 +144,15 @@ void Timer::update() {
         }
     }
 
-    // Re-add repeating timers
+    // Re-add repeating timers before executing callbacks
     for (auto& timer : repeating_timers_to_readd) {
         pImpl->timer_heap.push(std::move(timer));
+    }
+
+    // Second pass: execute all callbacks after heap manipulation is complete
+    // This ensures that any new timers added in callbacks won't interfere with current update
+    for (const auto& callback : callbacks_to_execute) {
+        callback();
     }
 }
 
