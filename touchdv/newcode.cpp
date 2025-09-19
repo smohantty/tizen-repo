@@ -137,7 +137,6 @@ public:
         write(mUinputFd, &ev, sizeof(ev));
     }
 };
-
 #endif
 
 // Mock touch device for testing and non-Linux platforms
@@ -166,6 +165,7 @@ public:
     void setEventCallback(EventCallback callback) { mEventCallback = callback; }
 };
 
+// Factory function to create appropriate device
 std::unique_ptr<TouchDevice> createTouchDevice() {
 #ifdef __linux__
     return std::make_unique<LinuxTouchDevice>();
@@ -174,343 +174,111 @@ std::unique_ptr<TouchDevice> createTouchDevice() {
 #endif
 }
 
-// --------------------- Smoothing Strategies ---------------------
-class SmoothingStrategy {
-public:
-    virtual ~SmoothingStrategy() = default;
-    virtual TouchPoint smooth(const TouchPoint& in) = 0;
-    virtual void reset() {}
-};
+// --------------------- VirtualTouchDevice::Impl::senderLoop ---------------------
+void VirtualTouchDevice::Impl::senderLoop(){
+    using clk=steady_clock;
+    double period=1.0/mCfg.outputRateHz;
+    auto nextTick=clk::now();
 
-class EmaSmoother : public SmoothingStrategy {
-    bool mInitialized = false;
-    float mX = 0, mY = 0;
-    double mAlpha;
-public:
-    explicit EmaSmoother(double alpha) : mAlpha(alpha) {}
-    TouchPoint smooth(const TouchPoint& in) override;
-    void reset() override;
-};
+    while(mRunning){
+        nextTick += std::chrono::duration_cast<steady_clock::duration>(duration<double>(period));
 
-class KalmanSmoother : public SmoothingStrategy {
-    bool mInitialized = false;
-    double mX=0, mVX=0, mY=0, mVY=0;
-    double mP[4][4]{};
-    double mQ, mR;
-    steady_clock::time_point mLast;
-public:
-    KalmanSmoother(double q, double r) : mQ(q), mR(r) {}
-    TouchPoint smooth(const TouchPoint& in) override;
-    void reset() override;
-};
-
-class OneEuroSmoother : public SmoothingStrategy {
-    bool mInitialized=false;
-    float mX=0,mY=0,mDX=0,mDY=0;
-    double mFreq, mMinCutoff, mBeta, mDCutoff;
-    steady_clock::time_point mLast;
-    static double alpha(double cutoff,double dt);
-    static double lowpass(double x,double prev,double a);
-public:
-    OneEuroSmoother(double freq, double minCutoff, double beta, double dCutoff)
-        : mFreq(freq), mMinCutoff(minCutoff), mBeta(beta), mDCutoff(dCutoff) {}
-    TouchPoint smooth(const TouchPoint& in) override;
-    void reset() override;
-};
-
-class NoSmoothing : public SmoothingStrategy {
-public:
-    TouchPoint smooth(const TouchPoint& in) override { return in; }
-};
-
-std::unique_ptr<SmoothingStrategy> createSmoothingStrategy(SmoothingType type, const SmoothingConfig& config) {
-    switch (type) {
-        case SmoothingType::None: return std::make_unique<NoSmoothing>();
-        case SmoothingType::EMA: return std::make_unique<EmaSmoother>(config.emaAlpha);
-        case SmoothingType::Kalman: return std::make_unique<KalmanSmoother>(config.kalmanQ, config.kalmanR);
-        case SmoothingType::OneEuro:
-            return std::make_unique<OneEuroSmoother>(config.oneEuroFreq, config.oneEuroMinCutoff,
-                                                     config.oneEuroBeta, config.oneEuroDCutoff);
-        default: return std::make_unique<NoSmoothing>();
-    }
-}
-
-// --------------------- Smoother Implementations ---------------------
-TouchPoint EmaSmoother::smooth(const TouchPoint& in) {
-    TouchPoint out = in;
-    if (!mInitialized) {
-        mX = in.x; mY = in.y;
-        mInitialized = true;
-    } else {
-        mX = float(mAlpha*in.x + (1.0-mAlpha)*mX);
-        mY = float(mAlpha*in.y + (1.0-mAlpha)*mY);
-    }
-    out.x = mX; out.y = mY;
-    return out;
-}
-void EmaSmoother::reset() { mInitialized=false; }
-
-TouchPoint KalmanSmoother::smooth(const TouchPoint& in) {
-    auto now = in.ts;
-    double dt = mInitialized ? toSeconds(now - mLast) : 1.0/120.0;
-    if (dt<=0) dt=1.0/120.0;
-    mLast = now;
-
-    if (!mInitialized) {
-        mX=in.x; mY=in.y; mVX=0; mVY=0;
-        for(int i=0;i<4;i++) for(int j=0;j<4;j++) mP[i][j]=0;
-        mInitialized = true;
-        return in;
-    }
-    mX += mVX*dt; mY += mVY*dt;
-    for(int i=0;i<4;i++) mP[i][i]+=mQ;
-
-    double zx=in.x, zy=in.y;
-    double yx=zx-mX, yy=zy-mY;
-    double Sx=mP[0][0]+mR, Sy=mP[2][2]+mR;
-    double Kx=mP[0][0]/Sx, Ky=mP[2][2]/Sy;
-
-    mX += Kx*yx; mY += Ky*yy;
-    mVX += Kx*yx/dt; mVY += Ky*yy/dt;
-    mP[0][0]*=(1-Kx); mP[2][2]*=(1-Ky);
-
-    TouchPoint out=in;
-    out.x=float(mX); out.y=float(mY);
-    return out;
-}
-void KalmanSmoother::reset() { mInitialized=false; }
-
-double OneEuroSmoother::alpha(double cutoff,double dt) {
-    double tau=1.0/(2*M_PI*cutoff);
-    return 1.0/(1.0+tau/dt);
-}
-double OneEuroSmoother::lowpass(double x,double prev,double a) {
-    return a*x+(1-a)*prev;
-}
-TouchPoint OneEuroSmoother::smooth(const TouchPoint& in) {
-    auto now=in.ts;
-    double dt = mInitialized ? toSeconds(now-mLast) : 1.0/mFreq;
-    if (dt<=0) dt=1.0/mFreq;
-    mLast=now;
-
-    if (!mInitialized) {
-        mX=in.x; mY=in.y; mDX=0; mDY=0;
-        mInitialized=true;
-        return in;
-    }
-    double dx=(in.x-mX)/dt, dy=(in.y-mY)/dt;
-    double adx=alpha(mDCutoff,dt);
-    mDX=float(lowpass(dx,mDX,adx));
-    mDY=float(lowpass(dy,mDY,adx));
-
-    double cutoffX=mMinCutoff+mBeta*std::fabs(mDX);
-    double cutoffY=mMinCutoff+mBeta*std::fabs(mDY);
-    double ax=alpha(cutoffX,dt), ay=alpha(cutoffY,dt);
-
-    mX=float(lowpass(in.x,mX,ax));
-    mY=float(lowpass(in.y,mY,ay));
-
-    TouchPoint out=in; out.x=mX; out.y=mY;
-    return out;
-}
-void OneEuroSmoother::reset() { mInitialized=false; }
-
-// --------------------- VirtualTouchDevice::Impl ---------------------
-class VirtualTouchDevice::Impl {
-public:
-    explicit Impl(const Config& cfg);
-    ~Impl();
-
-    bool start();
-    void stop();
-    void pushInputPoint(const TouchPoint& p);
-    void setSmoothingType(SmoothingType type, const SmoothingConfig& config);
-
-    void setTouchTransitionThreshold(double threshold);
-    double getTouchTransitionThreshold() const;
-
-    TouchDevice* getTouchDevice() const { return mTouchDevice.get(); }
-
-private:
-    Config mCfg;
-    std::deque<TouchPoint> mProcessingBuffer;
-
-    std::mutex mInputMutex;
-    TouchPoint mLatestInput;
-    bool mHasNewInput = false;
-
-    std::chrono::steady_clock::time_point mLastInputTime;
-    bool mHasActiveTouch = false;
-
-    std::condition_variable mCv;
-    std::atomic<bool> mRunning{false};
-    std::thread mSenderThread;
-
-    std::unique_ptr<SmoothingStrategy> mSmoother;
-    std::unique_ptr<TouchDevice> mTouchDevice;
-    bool findBracketing(steady_clock::time_point target,TouchPoint& a,TouchPoint& b);
-    TouchPoint interpolate(const TouchPoint& a,const TouchPoint& b,steady_clock::time_point t);
-    void senderLoop();
-    double calculateVelocityConfidence(const std::deque<TouchPoint>& buffer, size_t count = 3);
-};
-
-VirtualTouchDevice::Impl::Impl(const Config& cfg)
-    : mCfg(cfg) {
-    SmoothingConfig smoothConfig;
-    smoothConfig.emaAlpha = cfg.emaAlpha;
-    mSmoother = createSmoothingStrategy(SmoothingType::EMA, smoothConfig);
-    mTouchDevice = createTouchDevice();
-}
-VirtualTouchDevice::Impl::~Impl() { stop(); }
-
-// --------------------- VirtualTouchDevice ---------------------
-VirtualTouchDevice::VirtualTouchDevice(const Config& cfg)
-    : mImpl(std::make_unique<Impl>(cfg)) {}
-VirtualTouchDevice::~VirtualTouchDevice() = default;
-bool VirtualTouchDevice::start() { return mImpl->start(); }
-void VirtualTouchDevice::stop() { mImpl->stop(); }
-void VirtualTouchDevice::pushInputPoint(const TouchPoint& p) { mImpl->pushInputPoint(p); }
-void VirtualTouchDevice::setSmoothingType(SmoothingType type, const SmoothingConfig& config) { mImpl->setSmoothingType(type, config); }
-void VirtualTouchDevice::setTouchTransitionThreshold(double threshold) { mImpl->setTouchTransitionThreshold(threshold); }
-double VirtualTouchDevice::getTouchTransitionThreshold() const { return mImpl->getTouchTransitionThreshold(); }
-void VirtualTouchDevice::setMockEventCallback(std::function<void(const TouchPoint&)> callback) {
-    if (auto* mockDevice = dynamic_cast<MockTouchDevice*>(mImpl->getTouchDevice())) {
-        mockDevice->setEventCallback(callback);
-    }
-}
-
-// --------------------- Impl methods ---------------------
-void VirtualTouchDevice::Impl::senderLoop() {
-    using clk = steady_clock;
-
-    // Output period (e.g. 1/30kHz = 33.3µs) from config
-    const double periodSec = 1.0 / mCfg.outputRateHz;
-
-    // First tick aligned to "now"
-    auto nextTick = clk::now();
-
-    while (mRunning) {
-        auto start = clk::now();
-        nextTick = start + duration_cast<clk::duration>(duration<double>(periodSec));
-
-        // ------------------------------
-        // 1. Grab latest input (producer side)
-        // ------------------------------
-        TouchPoint latestInput;
-        bool hasInput = false;
+        bool hasNewInput = false;
+        TouchPoint newInput;
         {
-            std::lock_guard<std::mutex> lock(mInputMutex);
+            std::lock_guard<std::mutex> g(mInputMutex);
             if (mHasNewInput) {
-                latestInput = mLatestInput;
+                newInput = mLatestInput;
+                hasNewInput = true;
                 mHasNewInput = false;
-                hasInput = true;
-                mLastInputTime = latestInput.ts;
+            }
+        }
 
-                // Add to buffer for bracketing
-                mProcessingBuffer.push_back(latestInput);
-                // Limit buffer size (keep recent ~20 points)
-                if (mProcessingBuffer.size() > 20) {
-                    mProcessingBuffer.pop_front();
+        if (hasNewInput) {
+            if (!mProcessingBuffer.empty()) {
+                auto timeDiff = toSeconds(newInput.ts - mProcessingBuffer.back().ts);
+                if (timeDiff >= -0.1) { 
+                    mProcessingBuffer.push_back(newInput);
+                    mLastInputTime = newInput.ts;
+                    mHasActiveTouch = newInput.touching;
                 }
-            }
-        }
-
-        // ------------------------------
-        // 2. Determine output sample
-        // ------------------------------
-        TouchPoint outputPoint;
-        outputPoint.ts = clk::now();
-
-        if (mProcessingBuffer.empty()) {
-            // Case A: No input at all → no touch
-            outputPoint.touching = false;
-            outputPoint.pressure = 0;
-        } else {
-            // Case B: We have input history
-            TouchPoint a, b;
-            if (findBracketing(outputPoint.ts, a, b)) {
-                // Interpolation case
-                outputPoint = interpolate(a, b, outputPoint.ts);
-                outputPoint.touching = a.touching && b.touching;
             } else {
-                // Extrapolation case: use last sample
-                outputPoint = mProcessingBuffer.back();
-                outputPoint.ts = clk::now();
+                mProcessingBuffer.push_back(newInput);
+                mLastInputTime = newInput.ts;
+                mHasActiveTouch = newInput.touching;
             }
-        }
 
-        // ------------------------------
-        // 3. Apply smoothing
-        // ------------------------------
-        if (mSmoother) {
-            outputPoint = mSmoother->smooth(outputPoint);
-        }
-
-        // ------------------------------
-        // 4. Velocity & Direction adjustment
-        // ------------------------------
-        // If buffer has at least 2 points, compute simple velocity
-        if (mProcessingBuffer.size() >= 2) {
-            const auto& p1 = mProcessingBuffer[mProcessingBuffer.size() - 2];
-            const auto& p2 = mProcessingBuffer.back();
-
-            double dt = toSeconds(p2.ts - p1.ts);
-            if (dt > 0) {
-                double vx = (p2.x - p1.x) / dt;
-                double vy = (p2.y - p1.y) / dt;
-
-                // Adjust current point by projected velocity
-                double dtPredict = toSeconds(outputPoint.ts - p2.ts);
-                outputPoint.x += static_cast<float>(vx * dtPredict);
-                outputPoint.y += static_cast<float>(vy * dtPredict);
+            auto cutoff = newInput.ts - duration<double>(mCfg.maxInputHistorySec);
+            while(!mProcessingBuffer.empty() && mProcessingBuffer.front().ts < cutoff) {
+                mProcessingBuffer.pop_front();
             }
-        }
 
-        // ------------------------------
-        // 5. Apply touch transition threshold
-        // ------------------------------
-        if (!outputPoint.touching && mHasActiveTouch) {
-            // Only end the touch if no input for threshold duration
-            auto idleTime = clk::now() - mLastInputTime;
-            if (toSeconds(idleTime) < mCfg.touchTransitionThreshold) {
-                outputPoint.touching = true;
-                outputPoint.pressure = mProcessingBuffer.back().pressure;
-            } else {
+            // Explicit release
+            if (!newInput.touching) {
                 mHasActiveTouch = false;
+                if (mTouchDevice) {
+                    mTouchDevice->emit(newInput);
+                }
+                mProcessingBuffer.clear(); // flush sequence
+                std::unique_lock<std::mutex> lk(mInputMutex);
+                mCv.wait_until(lk, nextTick, [this](){return !mRunning;});
+                continue;
             }
-        } else if (outputPoint.touching && !mHasActiveTouch) {
-            // Touch has just started
-            mHasActiveTouch = true;
         }
 
-        // ------------------------------
-        // 6. Emit event to device
-        // ------------------------------
-        if (mTouchDevice) {
-            mTouchDevice->emit(outputPoint);
+        // Timeout release
+        if (mCfg.touchTimeoutMs > 0.0 && mHasActiveTouch && !mProcessingBuffer.empty()) {
+            auto currentTime = nextTick; 
+            auto timeSinceLastInput = toSeconds(currentTime - mLastInputTime);
+
+            if (timeSinceLastInput * 1000.0 > mCfg.touchTimeoutMs) {
+                TouchPoint autoReleasePoint = mProcessingBuffer.back();
+                autoReleasePoint.touching = false;
+                autoReleasePoint.pressure = 0;
+                autoReleasePoint.ts = currentTime;
+
+                if (mTouchDevice) {
+                    mTouchDevice->emit(autoReleasePoint);
+                }
+                mProcessingBuffer.clear(); // flush after timeout release
+                mHasActiveTouch = false;
+
+                std::unique_lock<std::mutex> lk(mInputMutex);
+                mCv.wait_until(lk, nextTick, [this](){return !mRunning;});
+                continue;
+            }
         }
 
-        
-        // ------------------------------
-        // 7. Sleep until next tick
-        // ------------------------------
+        // Interpolation
+        auto target = nextTick;
+        TouchPoint a, b, out;
+        if(findBracketing(target, a, b)){
+            out = interpolate(a, b, target);
+            if(mSmoother) out = mSmoother->smooth(out);
+
+            out.x = std::max(0.0f, std::min(out.x, float(mCfg.screenWidth-1)));
+            out.y = std::max(0.0f, std::min(out.y, float(mCfg.screenHeight-1)));
+
+            if (mTouchDevice) {
+                mTouchDevice->emit(out);
+            }
+        }
+
         std::unique_lock<std::mutex> lk(mInputMutex);
-        mCv.wait_until(lk, nextTick, [this]() { return !mRunning; });
+        mCv.wait_until(lk, nextTick, [this](){return !mRunning;});
     }
 
-    // ------------------------------
-    // Cleanup: ensure touch release if still active
-    // ------------------------------
+    // Final forced release
     if (mHasActiveTouch && !mProcessingBuffer.empty()) {
-        TouchPoint release;
-        release.ts = clk::now();
-        release.x = mProcessingBuffer.back().x;
-        release.y = mProcessingBuffer.back().y;
-        release.pressure = 0;
-        release.touching = false;
+        TouchPoint rel;
+        rel.ts = clk::now();
+        rel.x = mProcessingBuffer.back().x;
+        rel.y = mProcessingBuffer.back().y;
+        rel.pressure = 0;
+        rel.touching = false;
         if (mTouchDevice) {
-            mTouchDevice->emit(release);
+            mTouchDevice->emit(rel);
         }
+        mProcessingBuffer.clear();
     }
 }
-
