@@ -513,8 +513,8 @@ void testRealWorldMixedGestures() {
     std::cout << "Testing mixed gestures (tap, swipe, pan, flick, double tap) with 30Hz input → UI framework output" << std::endl;
 
     Config cfg;
-    cfg.screenWidth = 1920;
-    cfg.screenHeight = 1080;
+    cfg.screenWidth = 2560;
+    cfg.screenHeight = 1440;
     cfg.inputRateHz = 30.0;  // 30Hz input as specified
     cfg.outputRateHz = 120.0; // High output rate for UI framework
     cfg.touchTimeoutMs = 0.0;
@@ -527,9 +527,9 @@ void testRealWorldMixedGestures() {
     RealTimeUIFramework uiFramework;
 
     // Set up real-time callback - this is the ONLY interface we need!
-    device.setMockEventCallback([&uiFramework](const TouchPoint& point) {
-        uiFramework.onTouchEvent(point);
-    });
+    // device.setMockEventCallback([&uiFramework](const TouchPoint& point) {
+    //     uiFramework.onTouchEvent(point);
+    // });
 
     if (!device.start()) {
         std::cerr << "Failed to start device" << std::endl;

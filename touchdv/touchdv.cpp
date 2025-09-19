@@ -8,7 +8,7 @@ using namespace std::chrono;
 // Demo main function for Virtual Touch Device
 int main(){
     Config cfg;
-    cfg.screenWidth=1280; cfg.screenHeight=720;
+    cfg.screenWidth=2560; cfg.screenHeight=1440;
     cfg.inputRateHz=30.0; cfg.outputRateHz=120.0;
     cfg.maxExtrapolationMs=50.0; // Stop extrapolation after 50ms to prevent drift
     cfg.touchTimeoutMs=200.0; // Auto-release touch after 200ms of no input
@@ -27,7 +27,7 @@ int main(){
     std::cout<<"Virtual device started. Simulating input...\n";
 
     auto start=steady_clock::now();
-    double simDuration=6.0;
+    double simDuration=20.0;
     double inputPeriod=1.0/cfg.inputRateHz;
     while(toSeconds(steady_clock::now()-start)<simDuration){
         double progress=toSeconds(steady_clock::now()-start)/simDuration;

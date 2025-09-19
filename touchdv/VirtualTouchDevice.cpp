@@ -32,8 +32,7 @@ using namespace std::chrono;
 class LinuxTouchDevice : public TouchDevice {
 private:
     int mUinputFd = -1;
-    int mNextTrackingId = 1;
-    int mCurrentTrackingId = -1;
+    bool mPressed  = false;
 
 public:
     bool setup(const Config& cfg) override {
@@ -43,38 +42,41 @@ public:
             return false;
         }
 
+        // Advertise single-touch absolute pointer
         ioctl(mUinputFd, UI_SET_EVBIT, EV_SYN);
         ioctl(mUinputFd, UI_SET_EVBIT, EV_KEY);
         ioctl(mUinputFd, UI_SET_EVBIT, EV_ABS);
-        ioctl(mUinputFd, UI_SET_KEYBIT, BTN_TOUCH);
-        ioctl(mUinputFd, UI_SET_ABSBIT, ABS_MT_POSITION_X);
-        ioctl(mUinputFd, UI_SET_ABSBIT, ABS_MT_POSITION_Y);
-        ioctl(mUinputFd, UI_SET_ABSBIT, ABS_MT_TRACKING_ID);
-        ioctl(mUinputFd, UI_SET_ABSBIT, ABS_MT_PRESSURE);
+
+        ioctl(mUinputFd, UI_SET_KEYBIT, BTN_LEFT);
+        ioctl(mUinputFd, UI_SET_ABSBIT, ABS_X);
+        ioctl(mUinputFd, UI_SET_ABSBIT, ABS_Y);
 
         struct uinput_user_dev uidev{};
         snprintf(uidev.name, sizeof(uidev.name), "%s", cfg.deviceName.c_str());
         uidev.id.bustype = BUS_USB;
-        uidev.id.vendor = 0x1234;
+        uidev.id.vendor  = 0x1234;
         uidev.id.product = 0x5678;
         uidev.id.version = 1;
-        uidev.absmin[ABS_MT_POSITION_X] = 0;
-        uidev.absmax[ABS_MT_POSITION_X] = cfg.screenWidth - 1;
-        uidev.absmin[ABS_MT_POSITION_Y] = 0;
-        uidev.absmax[ABS_MT_POSITION_Y] = cfg.screenHeight - 1;
-        uidev.absmin[ABS_MT_PRESSURE] = 0;
-        uidev.absmax[ABS_MT_PRESSURE] = 255;
-        uidev.absmin[ABS_MT_TRACKING_ID] = 0;
-        uidev.absmax[ABS_MT_TRACKING_ID] = 65535;
+
+        // Absolute coordinate range
+        uidev.absmin[ABS_X] = 0;
+        uidev.absmax[ABS_X] = cfg.screenWidth  - 1;
+        uidev.absmin[ABS_Y] = 0;
+        uidev.absmax[ABS_Y] = cfg.screenHeight - 1;
 
         if (write(mUinputFd, &uidev, sizeof(uidev)) < 0) {
             perror("write uidev");
+            close(mUinputFd);
+            mUinputFd = -1;
             return false;
         }
         if (ioctl(mUinputFd, UI_DEV_CREATE) < 0) {
             perror("UI_DEV_CREATE");
+            close(mUinputFd);
+            mUinputFd = -1;
             return false;
         }
+
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
         return true;
     }
@@ -93,47 +95,21 @@ public:
         struct input_event ev{};
         gettimeofday(&ev.time, nullptr);
 
-        if (point.touching && mCurrentTrackingId < 0) {
-            // Start new touch
-            mCurrentTrackingId = mNextTrackingId++;
-            if (mNextTrackingId > 65535) mNextTrackingId = 1;
+        // Move pointer
+        ev.type = EV_ABS; ev.code = ABS_X; ev.value = static_cast<int>(point.x);
+        write(mUinputFd, &ev, sizeof(ev));
+        ev.type = EV_ABS; ev.code = ABS_Y; ev.value = static_cast<int>(point.y);
+        write(mUinputFd, &ev, sizeof(ev));
+
+        // Button press / release
+        bool shouldPress = point.touching;
+        if (shouldPress != mPressed) {
+            ev.type = EV_KEY; ev.code = BTN_LEFT; ev.value = shouldPress ? 1 : 0;
+            write(mUinputFd, &ev, sizeof(ev));
+            mPressed = shouldPress;
         }
 
-        if (point.touching) {
-            // Send touch events
-            ev.type = EV_ABS; ev.code = ABS_MT_TRACKING_ID; ev.value = mCurrentTrackingId;
-            write(mUinputFd, &ev, sizeof(ev));
-
-            ev.type = EV_ABS; ev.code = ABS_MT_POSITION_X; ev.value = (int)point.x;
-            write(mUinputFd, &ev, sizeof(ev));
-
-            ev.type = EV_ABS; ev.code = ABS_MT_POSITION_Y; ev.value = (int)point.y;
-            write(mUinputFd, &ev, sizeof(ev));
-
-            ev.type = EV_ABS; ev.code = ABS_MT_PRESSURE; ev.value = point.pressure;
-            write(mUinputFd, &ev, sizeof(ev));
-
-            ev.type = EV_SYN; ev.code = SYN_MT_REPORT; ev.value = 0;
-            write(mUinputFd, &ev, sizeof(ev));
-
-            ev.type = EV_KEY; ev.code = BTN_TOUCH; ev.value = 1;
-            write(mUinputFd, &ev, sizeof(ev));
-        } else {
-            // End touch
-            if (mCurrentTrackingId >= 0) {
-                ev.type = EV_ABS; ev.code = ABS_MT_TRACKING_ID; ev.value = -1;
-                write(mUinputFd, &ev, sizeof(ev));
-
-                ev.type = EV_SYN; ev.code = SYN_MT_REPORT; ev.value = 0;
-                write(mUinputFd, &ev, sizeof(ev));
-
-                ev.type = EV_KEY; ev.code = BTN_TOUCH; ev.value = 0;
-                write(mUinputFd, &ev, sizeof(ev));
-
-                mCurrentTrackingId = -1;
-            }
-        }
-
+        // Frame sync
         ev.type = EV_SYN; ev.code = SYN_REPORT; ev.value = 0;
         write(mUinputFd, &ev, sizeof(ev));
     }
