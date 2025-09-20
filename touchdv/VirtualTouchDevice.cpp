@@ -14,6 +14,7 @@
 #include <sstream>
 #include <iomanip>
 #include <functional>
+#include <fstream>
 
 #ifdef __linux__
 #include <fcntl.h>
@@ -162,6 +163,76 @@ public:
     }
 };
 
+// Record touch device that saves all events to a file
+class RecordTouchDevice : public TouchDevice {
+private:
+    Config mConfig;
+    std::vector<TouchPoint> mRecordedEvents;
+    bool mIsRecording = false;
+
+public:
+    bool setup(const Config& cfg) override {
+        mConfig = cfg;
+        mRecordedEvents.clear();
+        mRecordedEvents.reserve(10000); // Reserve space for many events
+        mIsRecording = true;
+        return true;
+    }
+
+    void teardown() override {
+        if (mIsRecording) {
+            saveEventsToFile();
+            mIsRecording = false;
+        }
+    }
+
+    void emit(const TouchPoint& point) override {
+        if (mIsRecording) {
+            mRecordedEvents.push_back(point);
+        }
+    }
+
+private:
+    void saveEventsToFile() {
+        std::ofstream file(mConfig.recordFilePath);
+        if (!file.is_open()) {
+            std::cerr << "Failed to open record file: " << mConfig.recordFilePath << std::endl;
+            return;
+        }
+
+        file << "{\n";
+        file << "  \"deviceName\": \"" << mConfig.deviceName << "\",\n";
+        file << "  \"screenWidth\": " << mConfig.screenWidth << ",\n";
+        file << "  \"screenHeight\": " << mConfig.screenHeight << ",\n";
+        file << "  \"totalEvents\": " << mRecordedEvents.size() << ",\n";
+        file << "  \"events\": [\n";
+
+        for (size_t i = 0; i < mRecordedEvents.size(); ++i) {
+            const auto& event = mRecordedEvents[i];
+            auto timestamp_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                event.ts.time_since_epoch()).count();
+
+            file << "    {\n";
+            file << "      \"timestamp_ms\": " << timestamp_ms << ",\n";
+            file << "      \"x\": " << std::fixed << std::setprecision(2) << event.x << ",\n";
+            file << "      \"y\": " << std::fixed << std::setprecision(2) << event.y << ",\n";
+            file << "      \"touching\": " << (event.touching ? "true" : "false") << "\n";
+            file << "    }";
+            if (i < mRecordedEvents.size() - 1) {
+                file << ",";
+            }
+            file << "\n";
+        }
+
+        file << "  ]\n";
+        file << "}\n";
+        file.close();
+
+        std::cout << "Recorded " << mRecordedEvents.size() << " touch events to: "
+                  << mConfig.recordFilePath << std::endl;
+    }
+};
+
 // Factory function to create appropriate device
 std::unique_ptr<TouchDevice> createTouchDevice(const Config& cfg) {
     switch (cfg.deviceType) {
@@ -172,6 +243,9 @@ std::unique_ptr<TouchDevice> createTouchDevice(const Config& cfg) {
             // Linux device requested but not available, fall back to mock
             return std::make_unique<MockTouchDevice>();
 #endif
+
+        case DeviceType::Record:
+            return std::make_unique<RecordTouchDevice>();
 
         case DeviceType::Mock:
         default:
