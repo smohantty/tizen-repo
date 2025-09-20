@@ -27,6 +27,11 @@ using namespace std::chrono;
 
 namespace vtd {
 
+// --------------------- Internal Utility Functions ---------------------
+static double toSeconds(steady_clock::duration d) {
+    return duration_cast<duration<double>>(d).count();
+}
+
 // --------------------- Touch Device Implementations ---------------------
 
 #ifdef __linux__

@@ -33,11 +33,6 @@ struct Config {
     double touchTransitionThreshold = 0.1; // Threshold for touch state transitions (0.0-0.5)
 };
 
-// --------------------- Utility ---------------------
-static inline double toSeconds(steady_clock::duration d) {
-    return duration_cast<duration<double>>(d).count();
-}
-
 // --------------------- Touch Device Interface ---------------------
 // Abstract interface for touch devices (uinput, mock, etc.)
 class TouchDevice {

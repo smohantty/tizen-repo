@@ -5,6 +5,11 @@ using namespace vtd;
 #include <thread>
 #include <cassert>
 #include <iomanip>
+
+// Utility function for time conversions (local to this test file)
+static double toSeconds(std::chrono::steady_clock::duration d) {
+    return std::chrono::duration_cast<std::chrono::duration<double>>(d).count();
+}
 #include <cmath>
 #include <vector>
 #include <algorithm>
