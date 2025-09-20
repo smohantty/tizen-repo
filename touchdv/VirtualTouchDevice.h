@@ -22,14 +22,6 @@ enum class DeviceType {
     Mock            // Mock device for testing (no actual output)
 };
 
-// --------------------- Smoothing Strategies ---------------------
-enum class SmoothingType {
-    None,           // No smoothing
-    EMA,            // Exponential Moving Average
-    Kalman,         // Kalman filter (constant velocity model)
-    OneEuro         // 1-Euro filter
-};
-
 // --------------------- Config ---------------------
 struct Config {
     int screenWidth = 1920;
@@ -49,23 +41,6 @@ struct Config {
     bool enableUpsampledRecording = false;       // Record upsampled touchpoints
     std::string rawInputRecordPath = "./raw_input.json";         // File path for raw input recording
     std::string upsampledRecordPath = "./upsampled_output.json"; // File path for upsampled recording
-
-
-    // Smoothing configuration
-    SmoothingType smoothingType = SmoothingType::EMA;
-
-    // EMA parameters
-    double emaAlpha = 0.45;
-
-    // Kalman parameters
-    double kalmanQ = 0.01;  // Process noise
-    double kalmanR = 1.0;   // Measurement noise
-
-    // OneEuro parameters
-    double oneEuroFreq = 120.0;
-    double oneEuroMinCutoff = 1.0;
-    double oneEuroBeta = 0.007;
-    double oneEuroDCutoff = 1.0;
 
     // Default configuration factory
     static Config getDefault();

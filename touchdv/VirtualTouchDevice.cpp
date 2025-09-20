@@ -81,7 +81,6 @@ public:
             file << "  \"recordType\": \"upsampled_output\",\n";
             file << "  \"inputRateHz\": " << mConfig.inputRateHz << ",\n";
             file << "  \"outputRateHz\": " << mConfig.outputRateHz << ",\n";
-            file << "  \"smoothingType\": \"" << static_cast<int>(mConfig.smoothingType) << "\",\n";
         }
         file << "  \"totalEvents\": " << mRecordedEvents.size() << ",\n";
         file << "  \"events\": [\n";
@@ -260,164 +259,7 @@ std::unique_ptr<TouchDevice> createTouchDevice(const Config& cfg) {
     }
 }
 
-// --------------------- Smoothing Strategy Classes (Internal) ---------------------
-class SmoothingStrategy {
-public:
-    virtual ~SmoothingStrategy() = default;
-    virtual TouchPoint smooth(const TouchPoint& in) = 0;
-    virtual void reset() {}
-};
 
-// EMA Smoothing Implementation
-class EmaSmoother : public SmoothingStrategy {
-    bool mInitialized = false;
-    float mX = 0, mY = 0;
-    double mAlpha;
-public:
-    explicit EmaSmoother(double alpha) : mAlpha(alpha) {}
-    TouchPoint smooth(const TouchPoint& in) override;
-    void reset() override;
-};
-
-// Kalman Smoothing Implementation
-class KalmanSmoother : public SmoothingStrategy {
-    bool mInitialized = false;
-    double mX=0, mVX=0, mY=0, mVY=0;
-    double mP[4][4]{};
-    double mQ, mR;
-    steady_clock::time_point mLast;
-public:
-    KalmanSmoother(double q, double r) : mQ(q), mR(r) {}
-    TouchPoint smooth(const TouchPoint& in) override;
-    void reset() override;
-};
-
-// OneEuro Smoothing Implementation
-class OneEuroSmoother : public SmoothingStrategy {
-    bool mInitialized=false;
-    float mX=0,mY=0,mDX=0,mDY=0;
-    double mFreq, mMinCutoff, mBeta, mDCutoff;
-    steady_clock::time_point mLast;
-    static double alpha(double cutoff,double dt);
-    static double lowpass(double x,double prev,double a);
-public:
-    OneEuroSmoother(double freq, double minCutoff, double beta, double dCutoff)
-        : mFreq(freq), mMinCutoff(minCutoff), mBeta(beta), mDCutoff(dCutoff) {}
-    TouchPoint smooth(const TouchPoint& in) override;
-    void reset() override;
-};
-
-// No Smoothing Implementation
-class NoSmoothing : public SmoothingStrategy {
-public:
-    TouchPoint smooth(const TouchPoint& in) override;
-};
-
-// Factory function to create smoothing strategies
-std::unique_ptr<SmoothingStrategy> createSmoothingStrategy(const Config& config) {
-    switch (config.smoothingType) {
-        case SmoothingType::None:
-            return std::make_unique<NoSmoothing>();
-        case SmoothingType::EMA:
-            return std::make_unique<EmaSmoother>(config.emaAlpha);
-        case SmoothingType::Kalman:
-            return std::make_unique<KalmanSmoother>(config.kalmanQ, config.kalmanR);
-        case SmoothingType::OneEuro:
-            return std::make_unique<OneEuroSmoother>(config.oneEuroFreq, config.oneEuroMinCutoff,
-                                                   config.oneEuroBeta, config.oneEuroDCutoff);
-        default:
-            return std::make_unique<NoSmoothing>();
-    }
-}
-
-// --------------------- Smoothing Strategy Implementations ---------------------
-TouchPoint EmaSmoother::smooth(const TouchPoint& in) {
-    TouchPoint out = in;
-    if (!mInitialized) {
-        mX = in.x; mY = in.y;
-        mInitialized = true;
-    } else {
-        mX = float(mAlpha*in.x + (1.0-mAlpha)*mX);
-        mY = float(mAlpha*in.y + (1.0-mAlpha)*mY);
-    }
-    out.x = mX; out.y = mY;
-    return out;
-}
-
-void EmaSmoother::reset() { mInitialized=false; }
-
-TouchPoint KalmanSmoother::smooth(const TouchPoint& in) {
-    auto now = in.ts;
-    double dt = mInitialized ? toSeconds(now - mLast) : 1.0/120.0;
-    if (dt<=0) dt=1.0/120.0;
-    mLast = now;
-
-    if (!mInitialized) {
-        mX=in.x; mY=in.y; mVX=0; mVY=0;
-        for(int i=0;i<4;i++) for(int j=0;j<4;j++) mP[i][j]=0;
-        mInitialized = true;
-        return in;
-    }
-    // Predict
-    mX += mVX*dt; mY += mVY*dt;
-    for(int i=0;i<4;i++) mP[i][i]+=mQ;
-
-    // Update with measurement
-    double zx=in.x, zy=in.y;
-    double yx=zx-mX, yy=zy-mY;
-    double Sx=mP[0][0]+mR, Sy=mP[2][2]+mR;
-    double Kx=mP[0][0]/Sx, Ky=mP[2][2]/Sy;
-
-    mX += Kx*yx; mY += Ky*yy;
-    mVX += Kx*yx/dt; mVY += Ky*yy/dt;
-    mP[0][0]*=(1-Kx); mP[2][2]*=(1-Ky);
-
-    TouchPoint out=in;
-    out.x=float(mX); out.y=float(mY);
-    return out;
-}
-
-void KalmanSmoother::reset() { mInitialized=false; }
-
-double OneEuroSmoother::alpha(double cutoff,double dt) {
-    double tau=1.0/(2*M_PI*cutoff);
-    return 1.0/(1.0+tau/dt);
-}
-
-double OneEuroSmoother::lowpass(double x,double prev,double a) {
-    return a*x+(1-a)*prev;
-}
-
-TouchPoint OneEuroSmoother::smooth(const TouchPoint& in) {
-    auto now=in.ts;
-    double dt = mInitialized ? toSeconds(now-mLast) : 1.0/mFreq;
-    if (dt<=0) dt=1.0/mFreq;
-    mLast=now;
-
-    if (!mInitialized) {
-        mX=in.x; mY=in.y; mDX=0; mDY=0;
-        mInitialized=true;
-        return in;
-    }
-    double dx=(in.x-mX)/dt, dy=(in.y-mY)/dt;
-    double adx=alpha(mDCutoff,dt);
-    mDX=float(lowpass(dx,mDX,adx));
-    mDY=float(lowpass(dy,mDY,adx));
-
-    double cutoffX=mMinCutoff+mBeta*std::fabs(mDX);
-    double cutoffY=mMinCutoff+mBeta*std::fabs(mDY);
-    double ax=alpha(cutoffX,dt), ay=alpha(cutoffY,dt);
-
-    mX=float(lowpass(in.x,mX,ax));
-    mY=float(lowpass(in.y,mY,ay));
-
-    TouchPoint out=in; out.x=mX; out.y=mY;
-    return out;
-}
-
-void OneEuroSmoother::reset() { mInitialized=false; }
-
-TouchPoint NoSmoothing::smooth(const TouchPoint& in) { return in; }
 
 // --------------------- VirtualTouchDevice::Impl Class ---------------------
 class VirtualTouchDevice::Impl {
@@ -428,8 +270,6 @@ public:
         size_t expectedSize = static_cast<size_t>(cfg.inputRateHz * cfg.maxInputHistorySec * 1.5);
         mProcessingBuffer.reserve(std::max(expectedSize, size_t(100))); // Minimum 100 elements
 
-        // Initialize smoothing from config
-        mSmoother = createSmoothingStrategy(cfg);
 
         // Create appropriate touch device
         mTouchDevice = createTouchDevice(cfg);
@@ -522,7 +362,6 @@ private:
     std::atomic<bool> mRunning{false};
     std::thread mSenderThread;
 
-    std::unique_ptr<SmoothingStrategy> mSmoother;
     std::unique_ptr<TouchDevice> mTouchDevice;
 
     // Event callback
@@ -750,10 +589,6 @@ private:
                             if (findBracketing(currentTick, a, b)) {
                                 TouchPoint out = interpolate(a, b, currentTick);
 
-                                // Apply smoothing to interpolated events
-                                if (mSmoother) {
-                                    out = mSmoother->smooth(out);
-                                }
                                 out.x = std::max(0.0f, std::min(out.x, float(mCfg.screenWidth-1)));
                                 out.y = std::max(0.0f, std::min(out.y, float(mCfg.screenHeight-1)));
 
