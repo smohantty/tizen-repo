@@ -422,15 +422,86 @@ TouchPoint NoSmoothing::smooth(const TouchPoint& in) { return in; }
 // --------------------- VirtualTouchDevice::Impl Class ---------------------
 class VirtualTouchDevice::Impl {
 public:
-    explicit Impl(const Config& cfg);
-    ~Impl();
+    explicit Impl(const Config& cfg) : mCfg(cfg) {
+        // Pre-allocate processing buffer for efficiency
+        // Reserve space for: inputRate * historyDuration + some extra headroom
+        size_t expectedSize = static_cast<size_t>(cfg.inputRateHz * cfg.maxInputHistorySec * 1.5);
+        mProcessingBuffer.reserve(std::max(expectedSize, size_t(100))); // Minimum 100 elements
 
-    bool start();
-    void stop();
-    void pushInputPoint(const TouchPoint& p);
+        // Initialize smoothing from config
+        mSmoother = createSmoothingStrategy(cfg);
+
+        // Create appropriate touch device
+        mTouchDevice = createTouchDevice(cfg);
+
+        // Initialize recording functionality if enabled
+        if (cfg.enableRawInputRecording) {
+            mRawInputRecorder = std::make_unique<FileRecorder>(
+                cfg.rawInputRecordPath, cfg, true);
+        }
+
+        if (cfg.enableUpsampledRecording) {
+            mUpsampledRecorder = std::make_unique<FileRecorder>(
+                cfg.upsampledRecordPath,  cfg, false);
+        }
+    }
+
+    ~Impl() {
+        stop();
+
+        // Save recorded data before destruction
+        if (mRawInputRecorder) {
+            mRawInputRecorder->saveToFile();
+        }
+
+        if (mUpsampledRecorder) {
+            mUpsampledRecorder->saveToFile();
+        }
+    }
+
+    bool start() {
+        if (mRunning.exchange(true)) return false;
+        if (!mTouchDevice || !mTouchDevice->setup(mCfg)) {
+            std::cerr << "Failed to setup touch device\n";
+            mRunning=false; return false;
+        }
+        mSenderThread=std::thread(&Impl::senderLoop,this);
+        return true;
+    }
+
+    void stop() {
+        if (!mRunning.exchange(false)) return;
+        if (mSenderThread.joinable()) mSenderThread.join();
+        if (mTouchDevice) {
+            mTouchDevice->teardown();
+        }
+    }
+
+    void pushInputPoint(const TouchPoint& p) {
+        // Validate input point
+        if (std::isnan(p.x) || std::isnan(p.y) ||
+            p.x < 0 || p.x > mCfg.screenWidth - 1 ||
+            p.y < 0 || p.y > mCfg.screenHeight - 1 ) {
+            perror("invalid input point");
+            return;
+        }
+
+        // Record raw input if enabled
+        if (mRawInputRecorder) {
+            mRawInputRecorder->recordEvent(p);
+        }
+
+        {
+            std::lock_guard<std::mutex> g(mInputMutex);
+            mLatestInput = p;
+            mHasNewInput = true;
+        }
+    }
 
     // Event callback interface
-    void setEventCallback(std::function<void(const TouchPoint&)> callback);
+    void setEventCallback(std::function<void(const TouchPoint&)> callback) {
+        mEventCallback = callback;
+    }
 
     // Access to touch device for testing
     TouchDevice* getTouchDevice() const { return mTouchDevice.get(); }
@@ -736,43 +807,6 @@ private:
 };
 
 // --------------------- VirtualTouchDevice::Impl Implementation ---------------------
-VirtualTouchDevice::Impl::Impl(const Config& cfg)
-    : mCfg(cfg) {
-    // Pre-allocate processing buffer for efficiency
-    // Reserve space for: inputRate * historyDuration + some extra headroom
-    size_t expectedSize = static_cast<size_t>(cfg.inputRateHz * cfg.maxInputHistorySec * 1.5);
-    mProcessingBuffer.reserve(std::max(expectedSize, size_t(100))); // Minimum 100 elements
-
-    // Initialize smoothing from config
-    mSmoother = createSmoothingStrategy(cfg);
-
-    // Create appropriate touch device
-    mTouchDevice = createTouchDevice(cfg);
-
-    // Initialize recording functionality if enabled
-    if (cfg.enableRawInputRecording) {
-        mRawInputRecorder = std::make_unique<FileRecorder>(
-            cfg.rawInputRecordPath, cfg, true);
-    }
-
-    if (cfg.enableUpsampledRecording) {
-        mUpsampledRecorder = std::make_unique<FileRecorder>(
-            cfg.upsampledRecordPath,  cfg, false);
-    }
-}
-
-VirtualTouchDevice::Impl::~Impl() {
-    stop();
-
-    // Save recorded data before destruction
-    if (mRawInputRecorder) {
-        mRawInputRecorder->saveToFile();
-    }
-
-    if (mUpsampledRecorder) {
-        mUpsampledRecorder->saveToFile();
-    }
-}
 
 // --------------------- VirtualTouchDevice Implementation ---------------------
 VirtualTouchDevice::VirtualTouchDevice(const Config& cfg)
@@ -798,47 +832,5 @@ void VirtualTouchDevice::setEventCallback(std::function<void(const TouchPoint&)>
 }
 
 // --------------------- VirtualTouchDevice::Impl Method Implementations ---------------------
-bool VirtualTouchDevice::Impl::start() {
-    if (mRunning.exchange(true)) return false;
-    if (!mTouchDevice || !mTouchDevice->setup(mCfg)) {
-        std::cerr << "Failed to setup touch device\n";
-        mRunning=false; return false;
-    }
-    mSenderThread=std::thread(&Impl::senderLoop,this);
-    return true;
-}
-
-void VirtualTouchDevice::Impl::stop() {
-    if (!mRunning.exchange(false)) return;
-    if (mSenderThread.joinable()) mSenderThread.join();
-    if (mTouchDevice) {
-        mTouchDevice->teardown();
-    }
-}
-
-void VirtualTouchDevice::Impl::pushInputPoint(const TouchPoint& p) {
-    // Validate input point
-    if (std::isnan(p.x) || std::isnan(p.y) ||
-        p.x < 0 || p.x > mCfg.screenWidth - 1 ||
-        p.y < 0 || p.y > mCfg.screenHeight - 1 ) {
-        perror("invalid input point");
-        return;
-    }
-
-    // Record raw input if enabled
-    if (mRawInputRecorder) {
-        mRawInputRecorder->recordEvent(p);
-    }
-
-    {
-        std::lock_guard<std::mutex> g(mInputMutex);
-        mLatestInput = p;
-        mHasNewInput = true;
-    }
-}
-
-void VirtualTouchDevice::Impl::setEventCallback(std::function<void(const TouchPoint&)> callback) {
-    mEventCallback = callback;
-}
 
 } // namespace vtd
