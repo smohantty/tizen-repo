@@ -41,6 +41,84 @@ static double toSeconds(steady_clock::duration d) {
 }
 
 
+// --------------------- File Recorder Utility ---------------------
+// Utility class for recording touch events to JSON files
+class FileRecorder {
+private:
+    std::vector<TouchPoint> mRecordedEvents;
+    std::string mFilePath;
+    std::string mRecordType;  // "raw_input" or "upsampled_output"
+    Config mConfig;
+    mutable std::mutex mRecordMutex;
+
+public:
+    FileRecorder(const std::string& filePath, const std::string& recordType, const Config& config)
+        : mFilePath(filePath), mRecordType(recordType), mConfig(config) {
+        mRecordedEvents.reserve(10000); // Reserve space for many events
+    }
+
+    void recordEvent(const TouchPoint& point) {
+        std::lock_guard<std::mutex> lock(mRecordMutex);
+        mRecordedEvents.push_back(point);
+    }
+
+    void saveToFile() {
+        std::lock_guard<std::mutex> lock(mRecordMutex);
+        if (mRecordedEvents.empty()) return;
+
+        std::ofstream file(mFilePath);
+        if (!file.is_open()) {
+            std::cerr << "Failed to open " << mRecordType << " record file: " << mFilePath << std::endl;
+            return;
+        }
+
+        file << "{\n";
+        file << "  \"recordType\": \"" << mRecordType << "\",\n";
+        file << "  \"deviceName\": \"" << mConfig.deviceName << "\",\n";
+        file << "  \"screenWidth\": " << mConfig.screenWidth << ",\n";
+        file << "  \"screenHeight\": " << mConfig.screenHeight << ",\n";
+        file << "  \"inputRateHz\": " << mConfig.inputRateHz << ",\n";
+        file << "  \"outputRateHz\": " << mConfig.outputRateHz << ",\n";
+        file << "  \"smoothingType\": \"" << static_cast<int>(mConfig.smoothingType) << "\",\n";
+        file << "  \"totalEvents\": " << mRecordedEvents.size() << ",\n";
+        file << "  \"events\": [\n";
+
+        for (size_t i = 0; i < mRecordedEvents.size(); ++i) {
+            const auto& event = mRecordedEvents[i];
+            auto timestamp_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                event.ts.time_since_epoch()).count();
+
+            file << "    {\n";
+            file << "      \"timestamp_ms\": " << timestamp_ms << ",\n";
+            file << "      \"x\": " << std::fixed << std::setprecision(2) << event.x << ",\n";
+            file << "      \"y\": " << std::fixed << std::setprecision(2) << event.y << ",\n";
+            file << "      \"touching\": " << (event.touching ? "true" : "false") << "\n";
+            file << "    }";
+            if (i < mRecordedEvents.size() - 1) {
+                file << ",";
+            }
+            file << "\n";
+        }
+
+        file << "  ]\n";
+        file << "}\n";
+        file.close();
+
+        std::cout << "Recorded " << mRecordedEvents.size() << " " << mRecordType
+                  << " events to: " << mFilePath << std::endl;
+    }
+
+    size_t getEventCount() const {
+        std::lock_guard<std::mutex> lock(mRecordMutex);
+        return mRecordedEvents.size();
+    }
+
+    void clear() {
+        std::lock_guard<std::mutex> lock(mRecordMutex);
+        mRecordedEvents.clear();
+    }
+};
+
 // --------------------- Touch Device Interface ---------------------
 // Abstract interface for touch devices (uinput, mock, etc.)
 class TouchDevice {
@@ -163,75 +241,6 @@ public:
     }
 };
 
-// Record touch device that saves all events to a file
-class RecordTouchDevice : public TouchDevice {
-private:
-    Config mConfig;
-    std::vector<TouchPoint> mRecordedEvents;
-    bool mIsRecording = false;
-
-public:
-    bool setup(const Config& cfg) override {
-        mConfig = cfg;
-        mRecordedEvents.clear();
-        mRecordedEvents.reserve(10000); // Reserve space for many events
-        mIsRecording = true;
-        return true;
-    }
-
-    void teardown() override {
-        if (mIsRecording) {
-            saveEventsToFile();
-            mIsRecording = false;
-        }
-    }
-
-    void emit(const TouchPoint& point) override {
-        if (mIsRecording) {
-            mRecordedEvents.push_back(point);
-        }
-    }
-
-private:
-    void saveEventsToFile() {
-        std::ofstream file(mConfig.recordFilePath);
-        if (!file.is_open()) {
-            std::cerr << "Failed to open record file: " << mConfig.recordFilePath << std::endl;
-            return;
-        }
-
-        file << "{\n";
-        file << "  \"deviceName\": \"" << mConfig.deviceName << "\",\n";
-        file << "  \"screenWidth\": " << mConfig.screenWidth << ",\n";
-        file << "  \"screenHeight\": " << mConfig.screenHeight << ",\n";
-        file << "  \"totalEvents\": " << mRecordedEvents.size() << ",\n";
-        file << "  \"events\": [\n";
-
-        for (size_t i = 0; i < mRecordedEvents.size(); ++i) {
-            const auto& event = mRecordedEvents[i];
-            auto timestamp_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-                event.ts.time_since_epoch()).count();
-
-            file << "    {\n";
-            file << "      \"timestamp_ms\": " << timestamp_ms << ",\n";
-            file << "      \"x\": " << std::fixed << std::setprecision(2) << event.x << ",\n";
-            file << "      \"y\": " << std::fixed << std::setprecision(2) << event.y << ",\n";
-            file << "      \"touching\": " << (event.touching ? "true" : "false") << "\n";
-            file << "    }";
-            if (i < mRecordedEvents.size() - 1) {
-                file << ",";
-            }
-            file << "\n";
-        }
-
-        file << "  ]\n";
-        file << "}\n";
-        file.close();
-
-        std::cout << "Recorded " << mRecordedEvents.size() << " touch events to: "
-                  << mConfig.recordFilePath << std::endl;
-    }
-};
 
 // Factory function to create appropriate device
 std::unique_ptr<TouchDevice> createTouchDevice(const Config& cfg) {
@@ -243,9 +252,6 @@ std::unique_ptr<TouchDevice> createTouchDevice(const Config& cfg) {
             // Linux device requested but not available, fall back to mock
             return std::make_unique<MockTouchDevice>();
 #endif
-
-        case DeviceType::Record:
-            return std::make_unique<RecordTouchDevice>();
 
         case DeviceType::Mock:
         default:
@@ -451,6 +457,10 @@ private:
     // Event callback
     std::function<void(const TouchPoint&)> mEventCallback;
 
+    // Recording functionality
+    std::unique_ptr<FileRecorder> mRawInputRecorder;
+    std::unique_ptr<FileRecorder> mUpsampledRecorder;
+
     bool findBracketing(steady_clock::time_point target,TouchPoint& a,TouchPoint& b);
     TouchPoint interpolate(const TouchPoint& a,const TouchPoint& b,steady_clock::time_point t);
     void senderLoop();
@@ -471,10 +481,30 @@ VirtualTouchDevice::Impl::Impl(const Config& cfg)
 
     // Create appropriate touch device
     mTouchDevice = createTouchDevice(cfg);
+
+    // Initialize recording functionality if enabled
+    if (cfg.enableRawInputRecording) {
+        mRawInputRecorder = std::make_unique<FileRecorder>(
+            cfg.rawInputRecordPath, "raw_input", cfg);
+    }
+
+    if (cfg.enableUpsampledRecording) {
+        mUpsampledRecorder = std::make_unique<FileRecorder>(
+            cfg.upsampledRecordPath, "upsampled_output", cfg);
+    }
 }
 
 VirtualTouchDevice::Impl::~Impl() {
     stop();
+
+    // Save recorded data before destruction
+    if (mRawInputRecorder) {
+        mRawInputRecorder->saveToFile();
+    }
+
+    if (mUpsampledRecorder) {
+        mUpsampledRecorder->saveToFile();
+    }
 }
 
 // --------------------- VirtualTouchDevice Implementation ---------------------
@@ -529,6 +559,11 @@ void VirtualTouchDevice::Impl::pushInputPoint(const TouchPoint& p) {
         return;
     }
 
+    // Record raw input if enabled
+    if (mRawInputRecorder) {
+        mRawInputRecorder->recordEvent(p);
+    }
+
     // Minimal lock - just update the latest input point
     {
         std::lock_guard<std::mutex> g(mInputMutex);
@@ -545,6 +580,11 @@ void VirtualTouchDevice::Impl::setEventCallback(std::function<void(const TouchPo
 }
 
 void VirtualTouchDevice::Impl::emitTouchPoint(const TouchPoint& point) {
+    // Record upsampled output if enabled
+    if (mUpsampledRecorder) {
+        mUpsampledRecorder->recordEvent(point);
+    }
+
     // Call the callback first if installed
     if (mEventCallback) {
         mEventCallback(point);

@@ -185,7 +185,6 @@ private:
         gesture.duration = toSeconds(gesture.endTime - gesture.startTime);
 
         // Calculate movement metrics
-        double totalDistance = 0.0;
         double maxVelocity = 0.0;
         std::vector<double> velocities;
 
@@ -193,7 +192,6 @@ private:
             double dx = points[i].x - points[i-1].x;
             double dy = points[i].y - points[i-1].y;
             double distance = std::sqrt(dx*dx + dy*dy);
-            totalDistance += distance;
 
             double dt = toSeconds(points[i].ts - points[i-1].ts);
             if (dt > 0.001) {

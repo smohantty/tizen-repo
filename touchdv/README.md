@@ -95,6 +95,68 @@ The application uses the following default configuration:
 - **Smoothing**: OneEuro filter with optimized parameters
 - **Touch Timeout**: 200ms auto-release
 
+### Recording Functionality
+
+TouchDV now supports recording both raw input and upsampled touchpoints for all backends (Linux, Mock, and Record devices). This feature allows users to capture and analyze touch data for debugging, testing, or research purposes.
+
+#### Recording Configuration
+
+Add the following configuration options to enable recording:
+
+```cpp
+Config cfg = Config::getDefault();
+
+// Enable raw input recording (records user input as received)
+cfg.enableRawInputRecording = true;
+cfg.rawInputRecordPath = "./raw_input.json";
+
+// Enable upsampled output recording (records processed/smoothed output)
+cfg.enableUpsampledRecording = true;
+cfg.upsampledRecordPath = "./upsampled_output.json";
+```
+
+#### Recording Data Format
+
+Both recording types generate JSON files with the following structure:
+
+```json
+{
+  "recordType": "raw_input" | "upsampled_output",
+  "deviceName": "Virtual IR Touch",
+  "screenWidth": 1920,
+  "screenHeight": 1080,
+  "inputRateHz": 30.0,
+  "outputRateHz": 120.0,
+  "smoothingType": "1",
+  "totalEvents": 42,
+  "events": [
+    {
+      "timestamp_ms": 1734567890123,
+      "x": 150.25,
+      "y": 200.75,
+      "touching": true
+    },
+    ...
+  ]
+}
+```
+
+#### Use Cases
+
+- **Raw Input Recording**: Captures original touch data as received from input devices
+  - Useful for analyzing input timing, jitter, and raw sensor data
+  - Records at the original input frequency (e.g., 30Hz)
+
+- **Upsampled Output Recording**: Captures processed touchpoints after smoothing and upsampling
+  - Shows the final output sent to the system
+  - Records at the output frequency (e.g., 120Hz) with interpolated/smoothed data
+  - Includes the effects of configured smoothing algorithms (EMA, Kalman, OneEuro)
+
+#### Recording Works With All Backends
+
+- **Linux Device**: Records touch events while sending to actual uinput device
+- **Mock Device**: Records events for testing without hardware interaction
+
 ## Technical Details
 
 ### Architecture

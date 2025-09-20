@@ -19,8 +19,7 @@ struct TouchPoint {
 // --------------------- Device Types ---------------------
 enum class DeviceType {
     Linux,          // Linux uinput device (requires /dev/uinput access)
-    Mock,           // Mock device for testing (no actual output)
-    Record          // Record device that saves all input to a file
+    Mock            // Mock device for testing (no actual output)
 };
 
 // --------------------- Smoothing Strategies ---------------------
@@ -44,7 +43,12 @@ struct Config {
 
     // Device configuration
     DeviceType deviceType = DeviceType::Mock; // Device type selection
-    std::string recordFilePath = "./touch_events.json"; // File path for Record device
+
+    // Recording configuration - works with all backends
+    bool enableRawInputRecording = false;        // Record raw input from user
+    bool enableUpsampledRecording = false;       // Record upsampled touchpoints
+    std::string rawInputRecordPath = "./raw_input.json";         // File path for raw input recording
+    std::string upsampledRecordPath = "./upsampled_output.json"; // File path for upsampled recording
 
     // Touch sequence handling - optimized for discrete touch patterns (TTTTTR)
     double touchTransitionThreshold = 0.1; // Threshold for touch state transitions (0.0-0.5)

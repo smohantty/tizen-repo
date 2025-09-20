@@ -1,0 +1,14 @@
+{
+  "deviceName": "Record Test Device",
+  "screenWidth": 1920,
+  "screenHeight": 1080,
+  "totalEvents": 1,
+  "events": [
+    {
+      "timestamp_ms": 2566212385,
+      "x": 105.00,
+      "y": 205.00,
+      "touching": false
+    }
+  ]
+}
