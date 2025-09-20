@@ -439,16 +439,11 @@ private:
             return true;
         }
 
-        for(size_t i=1; i<mProcessingBuffer.size(); ++i){
-            if (mProcessingBuffer[i].ts >= target){
-                a=mProcessingBuffer[i-1];
-                b=mProcessingBuffer[i];
-                return true;
-            }
-        }
+        //should never happen
+        std::cout<<"should never happen\n";
+        assert(false);
 
-        a=b=mProcessingBuffer.back();
-        return true;
+        return false;
     }
 
     TouchPoint interpolate(const TouchPoint& a, const TouchPoint& b, steady_clock::time_point t) {
