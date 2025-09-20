@@ -461,9 +461,169 @@ private:
     std::unique_ptr<FileRecorder> mRawInputRecorder;
     std::unique_ptr<FileRecorder> mUpsampledRecorder;
 
-    bool findBracketing(steady_clock::time_point target,TouchPoint& a,TouchPoint& b);
-    TouchPoint interpolate(const TouchPoint& a,const TouchPoint& b,steady_clock::time_point t);
-    double calculateVelocityConfidence(const std::vector<TouchPoint>& buffer, size_t count = 3);
+    bool findBracketing(steady_clock::time_point target, TouchPoint& a, TouchPoint& b) {
+        // Lock-free operation - only called from processing thread
+        if (mProcessingBuffer.empty()) return false;
+
+        // Need at least 2 points for proper interpolation
+        if (mProcessingBuffer.size() < 2) return false;
+
+        if (target <= mProcessingBuffer.front().ts){
+            a=b=mProcessingBuffer.front();
+            return true;
+        }
+
+        if (target >= mProcessingBuffer.back().ts){
+            auto& last = mProcessingBuffer.back();
+
+            // Check if we're too far ahead for extrapolation
+            double future = toSeconds(target - last.ts);
+            auto extrapolationLimit = std::chrono::duration<double, std::milli>(mCfg.maxExtrapolationMs);
+            if (future > extrapolationLimit.count() / 1000.0) {
+                // Don't generate events beyond extrapolation limit
+                return false;
+            }
+
+            // Extrapolate if we have velocity information and sufficient confidence
+            if (mProcessingBuffer.size() >= 2){
+                double confidence = calculateVelocityConfidence(mProcessingBuffer);
+                if (confidence > 0.5) { // Only extrapolate with reasonable confidence
+                    // Use weighted average of multiple points for better velocity estimation
+                    size_t pointsToUse = std::min(size_t(3), mProcessingBuffer.size());
+                    double totalWeight = 0.0;
+                    double vx = 0.0, vy = 0.0;
+
+                    for (size_t i = 0; i < pointsToUse - 1; ++i) {
+                        size_t idx1 = mProcessingBuffer.size() - 1 - i;
+                        size_t idx2 = mProcessingBuffer.size() - 2 - i;
+
+                        double dt = toSeconds(mProcessingBuffer[idx1].ts - mProcessingBuffer[idx2].ts);
+                        if (dt > 1e-6) {
+                            double weight = 1.0 / (1.0 + i); // Recent points have higher weight
+                            vx += weight * (mProcessingBuffer[idx1].x - mProcessingBuffer[idx2].x) / dt;
+                            vy += weight * (mProcessingBuffer[idx1].y - mProcessingBuffer[idx2].y) / dt;
+                            totalWeight += weight;
+                        }
+                    }
+
+                    if (totalWeight > 0.0) {
+                        vx /= totalWeight;
+                        vy /= totalWeight;
+
+                        a = last;
+                        b = last;
+                        b.x = float(last.x + vx * future);
+                        b.y = float(last.y + vy * future);
+                        b.ts = target;
+                        b.touching = last.touching;
+
+                        // Validate extrapolated position is reasonable
+                        if (b.x >= -100 && b.x <= mCfg.screenWidth + 100 &&
+                            b.y >= -100 && b.y <= mCfg.screenHeight + 100) {
+                            return true;
+                        }
+                    }
+                }
+            }
+            a=b=last;
+            return true;
+        }
+
+        for(size_t i=1; i<mProcessingBuffer.size(); ++i){
+            if (mProcessingBuffer[i].ts >= target){
+                a=mProcessingBuffer[i-1];
+                b=mProcessingBuffer[i];
+                return true;
+            }
+        }
+
+        a=b=mProcessingBuffer.back();
+        return true;
+    }
+
+    TouchPoint interpolate(const TouchPoint& a, const TouchPoint& b, steady_clock::time_point t) {
+        TouchPoint out;
+        out.ts = t;
+
+        double denom = toSeconds(b.ts - a.ts);
+        double u = (denom <= 1e-6) ? 0.0 : toSeconds(t - a.ts) / denom;
+
+        // Clamp interpolation factor
+        u = std::max(0.0, std::min(1.0, u));
+
+        // Interpolate position
+        out.x = float((1.0 - u) * a.x + u * b.x);
+        out.y = float((1.0 - u) * a.y + u * b.y);
+
+        // Intelligent touch state interpolation optimized for discrete sequences (TTTTTR pattern)
+        if (a.touching == b.touching) {
+            // Same state, keep it
+            out.touching = a.touching;
+        } else {
+            // State transition - use intelligent thresholds for discrete touch sequences
+            double threshold = mCfg.touchTransitionThreshold;
+            double releaseThreshold = 1.0 - mCfg.touchTransitionThreshold;
+
+            if (a.touching && !b.touching) {
+                // Touch to release: delay release to ensure clean gesture completion
+                // This handles cases where IR might miss the final release
+                out.touching = (u < releaseThreshold);
+            } else if (!a.touching && b.touching) {
+                // Release to touch: quick touch activation for responsive gestures
+                out.touching = (u >= threshold);
+            } else {
+                // Fallback for any other state combinations
+                out.touching = (u >= 0.5);
+            }
+        }
+
+        return out;
+    }
+
+    double calculateVelocityConfidence(const std::vector<TouchPoint>& buffer, size_t count = 3) {
+        if (buffer.size() < 2) return 0.0;
+
+        // Use std::array with bounds checking
+        std::array<double, 10> speeds;
+        size_t speedCount = 0;
+
+        size_t pointsToCheck = std::min({count, buffer.size() - 1, speeds.size()});
+        double avgSpeed = 0.0;
+        double speedVariance = 0.0;
+
+        // Calculate speeds between consecutive points
+        for (size_t i = 0; i < pointsToCheck; ++i) {
+            size_t idx1 = buffer.size() - 1 - i;
+            size_t idx2 = buffer.size() - 2 - i;
+
+            double dt = toSeconds(buffer[idx1].ts - buffer[idx2].ts);
+            if (dt > 1e-6 && speedCount < speeds.size()) {
+                double dx = buffer[idx1].x - buffer[idx2].x;
+                double dy = buffer[idx1].y - buffer[idx2].y;
+                double speed = std::sqrt(dx*dx + dy*dy) / dt;
+                speeds[speedCount] = speed;
+                avgSpeed += speed;
+                speedCount++;
+            }
+        }
+
+        if (speedCount == 0) return 0.0;
+
+        avgSpeed /= speedCount;
+
+        // Calculate variance
+        for (size_t i = 0; i < speedCount; ++i) {
+            double diff = speeds[i] - avgSpeed;
+            speedVariance += diff * diff;
+        }
+        speedVariance /= speedCount;
+
+        // Confidence is inversely related to coefficient of variation
+        if (avgSpeed < 1e-6) return 1.0; // Static point, high confidence
+
+        double cv = std::sqrt(speedVariance) / avgSpeed;
+        return std::exp(-cv); // Returns value between 0 and 1
+    }
 
     void emitTouchPoint(const TouchPoint& point) {
         // Record upsampled output if enabled
@@ -483,22 +643,20 @@ private:
     }
 
     void cleanupOldPoints(steady_clock::time_point /*currentTime*/) {
-
         if (mProcessingBuffer.size() > 20) {
             mProcessingBuffer.erase(mProcessingBuffer.begin());
         }
     }
 
-    void handleReleaseTouchPoint(const TouchPoint& releasePoint)
-    {
-            std::cout<<"handleReleaseTouchPoint \n";
+    void handleReleaseTouchPoint(const TouchPoint& releasePoint) {
+        std::cout<<"handleReleaseTouchPoint \n";
         emitTouchPoint(releasePoint);
         mHasActiveTouch = false;
         mProcessingBuffer.clear();
     }
 
-    void senderLoop(){
-        using clk=steady_clock;
+    void senderLoop() {
+        using clk = steady_clock;
         double period = 1.0 / mCfg.outputRateHz;
 
         while (mRunning) {
@@ -535,7 +693,7 @@ private:
                         TouchPoint releasePoint = mProcessingBuffer.back();
                         releasePoint.ts = currentTick;
                         releasePoint.touching = false;
-                                            std::cout<<"YY handleReleaseTouchPoint \n";
+                        std::cout<<"YY handleReleaseTouchPoint \n";
                         handleReleaseTouchPoint(releasePoint);
                     } else {
                         if (mProcessingBuffer.size() >= 2) {
@@ -683,167 +841,4 @@ void VirtualTouchDevice::Impl::setEventCallback(std::function<void(const TouchPo
     mEventCallback = callback;
 }
 
-bool VirtualTouchDevice::Impl::findBracketing(steady_clock::time_point target, TouchPoint& a, TouchPoint& b){
-    // Lock-free operation - only called from processing thread
-    if (mProcessingBuffer.empty()) return false;
-
-    // Need at least 2 points for proper interpolation
-    if (mProcessingBuffer.size() < 2) return false;
-
-    if (target <= mProcessingBuffer.front().ts){
-        a=b=mProcessingBuffer.front();
-        return true;
-    }
-
-    if (target >= mProcessingBuffer.back().ts){
-        auto& last = mProcessingBuffer.back();
-
-        // Check if we're too far ahead for extrapolation
-        double future = toSeconds(target - last.ts);
-        auto extrapolationLimit = std::chrono::duration<double, std::milli>(mCfg.maxExtrapolationMs);
-        if (future > extrapolationLimit.count() / 1000.0) {
-            // Don't generate events beyond extrapolation limit
-            return false;
-        }
-
-        // Extrapolate if we have velocity information and sufficient confidence
-        if (mProcessingBuffer.size() >= 2){
-            double confidence = calculateVelocityConfidence(mProcessingBuffer);
-            if (confidence > 0.5) { // Only extrapolate with reasonable confidence
-                // Use weighted average of multiple points for better velocity estimation
-                size_t pointsToUse = std::min(size_t(3), mProcessingBuffer.size());
-                double totalWeight = 0.0;
-                double vx = 0.0, vy = 0.0;
-
-                for (size_t i = 0; i < pointsToUse - 1; ++i) {
-                    size_t idx1 = mProcessingBuffer.size() - 1 - i;
-                    size_t idx2 = mProcessingBuffer.size() - 2 - i;
-
-                    double dt = toSeconds(mProcessingBuffer[idx1].ts - mProcessingBuffer[idx2].ts);
-                    if (dt > 1e-6) {
-                        double weight = 1.0 / (1.0 + i); // Recent points have higher weight
-                        vx += weight * (mProcessingBuffer[idx1].x - mProcessingBuffer[idx2].x) / dt;
-                        vy += weight * (mProcessingBuffer[idx1].y - mProcessingBuffer[idx2].y) / dt;
-                        totalWeight += weight;
-                    }
-                }
-
-                if (totalWeight > 0.0) {
-                    vx /= totalWeight;
-                    vy /= totalWeight;
-
-                    a = last;
-                    b = last;
-                    b.x = float(last.x + vx * future);
-                    b.y = float(last.y + vy * future);
-                    b.ts = target;
-                    b.touching = last.touching;
-
-                    // Validate extrapolated position is reasonable
-                    if (b.x >= -100 && b.x <= mCfg.screenWidth + 100 &&
-                        b.y >= -100 && b.y <= mCfg.screenHeight + 100) {
-                        return true;
-                    }
-                }
-            }
-        }
-        a=b=last;
-        return true;
-    }
-
-    for(size_t i=1; i<mProcessingBuffer.size(); ++i){
-        if (mProcessingBuffer[i].ts >= target){
-            a=mProcessingBuffer[i-1];
-            b=mProcessingBuffer[i];
-            return true;
-        }
-    }
-
-    a=b=mProcessingBuffer.back();
-    return true;
-}
-
-double VirtualTouchDevice::Impl::calculateVelocityConfidence(const std::vector<TouchPoint>& buffer, size_t count) {
-    if (buffer.size() < 2) return 0.0;
-
-    // Use std::array with bounds checking
-    std::array<double, 10> speeds;
-    size_t speedCount = 0;
-
-    size_t pointsToCheck = std::min({count, buffer.size() - 1, speeds.size()});
-    double avgSpeed = 0.0;
-    double speedVariance = 0.0;
-
-    // Calculate speeds between consecutive points
-    for (size_t i = 0; i < pointsToCheck; ++i) {
-        size_t idx1 = buffer.size() - 1 - i;
-        size_t idx2 = buffer.size() - 2 - i;
-
-        double dt = toSeconds(buffer[idx1].ts - buffer[idx2].ts);
-        if (dt > 1e-6 && speedCount < speeds.size()) {
-            double dx = buffer[idx1].x - buffer[idx2].x;
-            double dy = buffer[idx1].y - buffer[idx2].y;
-            double speed = std::sqrt(dx*dx + dy*dy) / dt;
-            speeds[speedCount] = speed;
-            avgSpeed += speed;
-            speedCount++;
-        }
-    }
-
-    if (speedCount == 0) return 0.0;
-
-    avgSpeed /= speedCount;
-
-    // Calculate variance
-    for (size_t i = 0; i < speedCount; ++i) {
-        double diff = speeds[i] - avgSpeed;
-        speedVariance += diff * diff;
-    }
-    speedVariance /= speedCount;
-
-    // Confidence is inversely related to coefficient of variation
-    if (avgSpeed < 1e-6) return 1.0; // Static point, high confidence
-
-    double cv = std::sqrt(speedVariance) / avgSpeed;
-    return std::exp(-cv); // Returns value between 0 and 1
-}
-
-TouchPoint VirtualTouchDevice::Impl::interpolate(const TouchPoint& a,const TouchPoint& b,steady_clock::time_point t){
-    TouchPoint out;
-    out.ts = t;
-
-    double denom = toSeconds(b.ts - a.ts);
-    double u = (denom <= 1e-6) ? 0.0 : toSeconds(t - a.ts) / denom;
-
-    // Clamp interpolation factor
-    u = std::max(0.0, std::min(1.0, u));
-
-    // Interpolate position
-    out.x = float((1.0 - u) * a.x + u * b.x);
-    out.y = float((1.0 - u) * a.y + u * b.y);
-
-    // Intelligent touch state interpolation optimized for discrete sequences (TTTTTR pattern)
-    if (a.touching == b.touching) {
-        // Same state, keep it
-        out.touching = a.touching;
-    } else {
-        // State transition - use intelligent thresholds for discrete touch sequences
-        double threshold = mCfg.touchTransitionThreshold;
-        double releaseThreshold = 1.0 - mCfg.touchTransitionThreshold;
-
-        if (a.touching && !b.touching) {
-            // Touch to release: delay release to ensure clean gesture completion
-            // This handles cases where IR might miss the final release
-            out.touching = (u < releaseThreshold);
-        } else if (!a.touching && b.touching) {
-            // Release to touch: quick touch activation for responsive gestures
-            out.touching = (u >= threshold);
-        } else {
-            // Fallback for any other state combinations
-            out.touching = (u >= 0.5);
-        }
-    }
-
-    return out;
-}
 } // namespace vtd
