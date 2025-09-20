@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstring>
 #include <vector>
+#include <array>
 #include <thread>
 #include <mutex>
 #include <condition_variable>
@@ -555,10 +556,13 @@ bool VirtualTouchDevice::Impl::findBracketing(steady_clock::time_point target, T
 double VirtualTouchDevice::Impl::calculateVelocityConfidence(const std::vector<TouchPoint>& buffer, size_t count) {
     if (buffer.size() < 2) return 0.0;
 
-    size_t pointsToCheck = std::min(count, buffer.size() - 1);
+    // Use std::array with bounds checking
+    std::array<double, 10> speeds;
+    size_t speedCount = 0;
+
+    size_t pointsToCheck = std::min({count, buffer.size() - 1, speeds.size()});
     double avgSpeed = 0.0;
     double speedVariance = 0.0;
-    std::vector<double> speeds;
 
     // Calculate speeds between consecutive points
     for (size_t i = 0; i < pointsToCheck; ++i) {
@@ -566,25 +570,26 @@ double VirtualTouchDevice::Impl::calculateVelocityConfidence(const std::vector<T
         size_t idx2 = buffer.size() - 2 - i;
 
         double dt = toSeconds(buffer[idx1].ts - buffer[idx2].ts);
-        if (dt > 1e-6) {
+        if (dt > 1e-6 && speedCount < speeds.size()) {
             double dx = buffer[idx1].x - buffer[idx2].x;
             double dy = buffer[idx1].y - buffer[idx2].y;
             double speed = std::sqrt(dx*dx + dy*dy) / dt;
-            speeds.push_back(speed);
+            speeds[speedCount] = speed;
             avgSpeed += speed;
+            speedCount++;
         }
     }
 
-    if (speeds.empty()) return 0.0;
+    if (speedCount == 0) return 0.0;
 
-    avgSpeed /= speeds.size();
+    avgSpeed /= speedCount;
 
     // Calculate variance
-    for (double speed : speeds) {
-        double diff = speed - avgSpeed;
+    for (size_t i = 0; i < speedCount; ++i) {
+        double diff = speeds[i] - avgSpeed;
         speedVariance += diff * diff;
     }
-    speedVariance /= speeds.size();
+    speedVariance /= speedCount;
 
     // Confidence is inversely related to coefficient of variation
     if (avgSpeed < 1e-6) return 1.0; // Static point, high confidence
