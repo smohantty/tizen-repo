@@ -4,7 +4,6 @@
 #include <cmath>
 #include <cstring>
 #include <vector>
-#include <deque>
 #include <thread>
 #include <mutex>
 #include <condition_variable>
@@ -374,7 +373,7 @@ public:
 
 private:
     Config mCfg;
-    std::deque<TouchPoint> mProcessingBuffer;  // Only accessed by processing thread
+    std::vector<TouchPoint> mProcessingBuffer;  // Only accessed by processing thread
 
     // Single input point with minimal locking
     std::mutex mInputMutex;
@@ -398,13 +397,18 @@ private:
     bool findBracketing(steady_clock::time_point target,TouchPoint& a,TouchPoint& b);
     TouchPoint interpolate(const TouchPoint& a,const TouchPoint& b,steady_clock::time_point t);
     void senderLoop();
-    double calculateVelocityConfidence(const std::deque<TouchPoint>& buffer, size_t count = 3);
+    double calculateVelocityConfidence(const std::vector<TouchPoint>& buffer, size_t count = 3);
     void emitTouchPoint(const TouchPoint& point); // Helper to emit with callback
 };
 
 // --------------------- VirtualTouchDevice::Impl Implementation ---------------------
 VirtualTouchDevice::Impl::Impl(const Config& cfg)
     : mCfg(cfg) {
+    // Pre-allocate processing buffer for efficiency
+    // Reserve space for: inputRate * historyDuration + some extra headroom
+    size_t expectedSize = static_cast<size_t>(cfg.inputRateHz * cfg.maxInputHistorySec * 1.5);
+    mProcessingBuffer.reserve(std::max(expectedSize, size_t(100))); // Minimum 100 elements
+
     // Initialize smoothing from config - create SmoothingConfig from flattened parameters
     SmoothingConfig smoothingConfig;
     smoothingConfig.emaAlpha = cfg.emaAlpha;
@@ -605,7 +609,7 @@ bool VirtualTouchDevice::Impl::findBracketing(steady_clock::time_point target, T
     return true;
 }
 
-double VirtualTouchDevice::Impl::calculateVelocityConfidence(const std::deque<TouchPoint>& buffer, size_t count) {
+double VirtualTouchDevice::Impl::calculateVelocityConfidence(const std::vector<TouchPoint>& buffer, size_t count) {
     if (buffer.size() < 2) return 0.0;
 
     size_t pointsToCheck = std::min(count, buffer.size() - 1);
@@ -723,8 +727,12 @@ void VirtualTouchDevice::Impl::senderLoop(){
 
             // Clean up old points
             auto cutoff = newInput.ts - duration<double>(mCfg.maxInputHistorySec);
-            while(!mProcessingBuffer.empty() && mProcessingBuffer.front().ts < cutoff) {
-                mProcessingBuffer.pop_front();
+            auto it = mProcessingBuffer.begin();
+            while (it != mProcessingBuffer.end() && it->ts < cutoff) {
+                ++it;
+            }
+            if (it != mProcessingBuffer.begin()) {
+                mProcessingBuffer.erase(mProcessingBuffer.begin(), it);
             }
             // Explicit release
             if (!newInput.touching) {
