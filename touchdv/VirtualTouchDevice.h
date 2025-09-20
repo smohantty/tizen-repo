@@ -82,8 +82,8 @@ public:
     void setTouchTransitionThreshold(double threshold = 0.1);
     double getTouchTransitionThreshold() const;
 
-    // Testing interface (only available with mock device)
-    void setMockEventCallback(std::function<void(const TouchPoint&)> callback);
+    // Event callback interface (works with all device types)
+    void setEventCallback(std::function<void(const TouchPoint&)> callback);
 
 private:
     class Impl;

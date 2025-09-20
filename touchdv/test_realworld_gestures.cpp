@@ -528,7 +528,7 @@ void testRealWorldMixedGestures() {
     RealTimeUIFramework uiFramework;
 
     // Set up real-time callback - this is the ONLY interface we need!
-    // device.setMockEventCallback([&uiFramework](const TouchPoint& point) {
+    // device.setEventCallback([&uiFramework](const TouchPoint& point) {
     //     uiFramework.onTouchEvent(point);
     // });
 

@@ -337,6 +337,9 @@ public:
     void setTouchTransitionThreshold(double threshold);
     double getTouchTransitionThreshold() const;
 
+    // Event callback interface
+    void setEventCallback(std::function<void(const TouchPoint&)> callback);
+
     // Access to touch device for testing
     TouchDevice* getTouchDevice() const { return mTouchDevice.get(); }
 
@@ -359,10 +362,15 @@ private:
 
     std::unique_ptr<SmoothingStrategy> mSmoother;
     std::unique_ptr<TouchDevice> mTouchDevice;
+
+    // Event callback
+    std::function<void(const TouchPoint&)> mEventCallback;
+
     bool findBracketing(steady_clock::time_point target,TouchPoint& a,TouchPoint& b);
     TouchPoint interpolate(const TouchPoint& a,const TouchPoint& b,steady_clock::time_point t);
     void senderLoop();
     double calculateVelocityConfidence(const std::deque<TouchPoint>& buffer, size_t count = 3);
+    void emitTouchPoint(const TouchPoint& point); // Helper to emit with callback
 };
 
 // --------------------- VirtualTouchDevice::Impl Implementation ---------------------
@@ -411,11 +419,9 @@ double VirtualTouchDevice::getTouchTransitionThreshold() const {
     return mImpl->getTouchTransitionThreshold();
 }
 
-// Testing interface methods
-void VirtualTouchDevice::setMockEventCallback(std::function<void(const TouchPoint&)> callback) {
-    if (auto* mockDevice = dynamic_cast<MockTouchDevice*>(mImpl->getTouchDevice())) {
-        mockDevice->setEventCallback(callback);
-    }
+// Event callback interface
+void VirtualTouchDevice::setEventCallback(std::function<void(const TouchPoint&)> callback) {
+    mImpl->setEventCallback(callback);
 }
 
 // --------------------- VirtualTouchDevice::Impl Method Implementations ---------------------
@@ -469,6 +475,22 @@ void VirtualTouchDevice::Impl::setTouchTransitionThreshold(double threshold) {
 
 double VirtualTouchDevice::Impl::getTouchTransitionThreshold() const {
     return mCfg.touchTransitionThreshold;
+}
+
+void VirtualTouchDevice::Impl::setEventCallback(std::function<void(const TouchPoint&)> callback) {
+    mEventCallback = callback;
+}
+
+void VirtualTouchDevice::Impl::emitTouchPoint(const TouchPoint& point) {
+    // Call the callback first if installed
+    if (mEventCallback) {
+        mEventCallback(point);
+    }
+
+    // Then emit to the backend device
+    if (mTouchDevice) {
+        mTouchDevice->emit(point);
+    }
 }
 
 
@@ -696,9 +718,7 @@ void VirtualTouchDevice::Impl::senderLoop(){
             // Explicit release
             if (!newInput.touching) {
                 mHasActiveTouch = false;
-                if (mTouchDevice) {
-                    mTouchDevice->emit(newInput);
-                }
+                emitTouchPoint(newInput);
                 mProcessingBuffer.clear(); // flush sequence
                 std::unique_lock<std::mutex> lk(mInputMutex);
                 mCv.wait_until(lk, nextTick, [this](){return !mRunning;});
@@ -717,9 +737,7 @@ void VirtualTouchDevice::Impl::senderLoop(){
                 autoReleasePoint.touching = false;
                 autoReleasePoint.ts = currentTime;
 
-                if (mTouchDevice) {
-                    mTouchDevice->emit(autoReleasePoint);
-                }
+                emitTouchPoint(autoReleasePoint);
 
                 mProcessingBuffer.push_back(autoReleasePoint);
                 mHasActiveTouch = false;
@@ -744,9 +762,7 @@ void VirtualTouchDevice::Impl::senderLoop(){
             out.x = std::max(0.0f, std::min(out.x, float(mCfg.screenWidth-1)));
             out.y = std::max(0.0f, std::min(out.y, float(mCfg.screenHeight-1)));
 
-            if (mTouchDevice) {
-                mTouchDevice->emit(out);
-            }
+            emitTouchPoint(out);
         }
 
         // Wait until next scheduled tick (minimal lock for condition variable)
@@ -761,9 +777,7 @@ void VirtualTouchDevice::Impl::senderLoop(){
         rel.x = mProcessingBuffer.back().x;
         rel.y = mProcessingBuffer.back().y;
         rel.touching = false;
-        if (mTouchDevice) {
-            mTouchDevice->emit(rel);
-        }
+        emitTouchPoint(rel);
     }
 }
 
