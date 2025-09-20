@@ -139,7 +139,7 @@ public:
         performTap(params);
 
         // Short delay between taps
-        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
         // Second tap
         performTap(params);
@@ -254,9 +254,6 @@ public:
             mDevice.pushInputPoint(point);
             std::this_thread::sleep_for(std::chrono::milliseconds(stepMs));
         }
-
-        // Hold at end position briefly
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
         // Release
         TouchPoint release;
@@ -398,20 +395,16 @@ GestureType getGestureTypeFromNumber(int number) {
 // Interactive terminal application for gesture testing
 int main(){
     Config cfg;
-    cfg.screenWidth = 2560;
-    cfg.screenHeight = 1440;
-    cfg.inputRateHz = 30.0;  // 30fps input rate for upsampling testing
-    cfg.outputRateHz = 120.0;
+    cfg.deviceType = DeviceType::Mock;
+    cfg.enableRawInputRecording = true;
+    cfg.enableUpsampledRecording = true;
+    cfg.rawInputRecordPath = "./dump/raw_recording.json";
+    cfg.upsampledRecordPath = "./dump/upsampled_recording.json";
+    cfg.screenWidth = 1920;
+    cfg.screenHeight = 1080;
+    cfg.deviceName = "IR Device";
+    cfg.smoothingType = SmoothingType::EMA;
     cfg.maxExtrapolationMs = 50.0;
-    cfg.touchTimeoutMs = 200.0;
-    cfg.deviceName = "TouchDV Gesture Tester";
-
-    // Configure OneEuro smoother for smooth gestures
-    cfg.smoothingType = SmoothingType::OneEuro;
-    cfg.oneEuroFreq = 120.0;
-    cfg.oneEuroMinCutoff = 1.0;
-    cfg.oneEuroBeta = 0.007;
-    cfg.oneEuroDCutoff = 1.0;
 
     VirtualTouchDevice vdev(cfg);
 

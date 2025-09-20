@@ -25,7 +25,7 @@ quit
 EOF
 
 # Run TouchDV with commands
-sudo ./buildir/touchdv < /tmp/touchdv_commands
+sudo ./builddir/touchdv < /tmp/touchdv_commands
 
 # Cleanup
 rm -f /tmp/touchdv_commands
