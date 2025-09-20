@@ -540,34 +540,11 @@ bool VirtualTouchDevice::Impl::findBracketing(steady_clock::time_point target, T
         return true;
     }
 
-    // Use binary search for better performance with large buffers
-    if (mProcessingBuffer.size() > 10) {
-        size_t left = 0, right = mProcessingBuffer.size() - 1;
-        while (left < right) {
-            size_t mid = left + (right - left) / 2;
-            if (mProcessingBuffer[mid].ts < target) {
-                left = mid + 1;
-            } else {
-                right = mid;
-            }
-        }
-
-        if (left > 0) {
-            a = mProcessingBuffer[left - 1];
-            b = mProcessingBuffer[left];
+    for(size_t i=1; i<mProcessingBuffer.size(); ++i){
+        if (mProcessingBuffer[i].ts >= target){
+            a=mProcessingBuffer[i-1];
+            b=mProcessingBuffer[i];
             return true;
-        } else {
-            a = b = mProcessingBuffer.front();
-            return true;
-        }
-    } else {
-        // Linear search for small buffers
-        for(size_t i=1; i<mProcessingBuffer.size(); ++i){
-            if (mProcessingBuffer[i].ts >= target){
-                a=mProcessingBuffer[i-1];
-                b=mProcessingBuffer[i];
-                return true;
-            }
         }
     }
 
