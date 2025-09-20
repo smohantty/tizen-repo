@@ -1,0 +1,36 @@
+# IDE and editor files
+.vscode/
+*.swp
+*.swo
+*~
+
+# Build directories
+builddir/
+buildir/
+build/
+
+# Compiled object files
+*.o
+*.obj
+
+# Executables
+*.exe
+touchdv
+test_realworld_gestures
+
+# Debug files
+*.dSYM/
+*.pdb
+
+# Temporary files
+*.tmp
+*.temp
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
