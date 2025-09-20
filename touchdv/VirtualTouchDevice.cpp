@@ -602,6 +602,9 @@ bool VirtualTouchDevice::Impl::findBracketing(steady_clock::time_point target, T
     // Lock-free operation - only called from processing thread
     if (mProcessingBuffer.empty()) return false;
 
+    // Need at least 2 points for proper interpolation
+    if (mProcessingBuffer.size() < 2) return false;
+
     if (target <= mProcessingBuffer.front().ts){
         a=b=mProcessingBuffer.front();
         return true;
@@ -788,11 +791,31 @@ void VirtualTouchDevice::Impl::senderLoop(){
                     mProcessingBuffer.push_back(newInput);
                     mLastInputTime = newInput.ts;
                     mHasActiveTouch = newInput.touching;
+
+                    // Emit the new input point immediately (no smoothing for raw events)
+                    // Exception: Don't emit release events immediately - let interpolation handle them
+                    if (newInput.touching) {
+                        TouchPoint emitPoint = newInput;
+                        // Don't apply smoothing to raw input events - they should be sent as-is
+                        emitPoint.x = std::max(0.0f, std::min(emitPoint.x, float(mCfg.screenWidth-1)));
+                        emitPoint.y = std::max(0.0f, std::min(emitPoint.y, float(mCfg.screenHeight-1)));
+                        emitTouchPoint(emitPoint);
+                    }
                 }
             } else {
                 mProcessingBuffer.push_back(newInput);
                 mLastInputTime = newInput.ts;
                 mHasActiveTouch = newInput.touching;
+
+                // Emit the first input point immediately (no smoothing for raw events)
+                // Exception: Don't emit release events immediately - let interpolation handle them
+                if (newInput.touching) {
+                    TouchPoint emitPoint = newInput;
+                    // Don't apply smoothing to raw input events - they should be sent as-is
+                    emitPoint.x = std::max(0.0f, std::min(emitPoint.x, float(mCfg.screenWidth-1)));
+                    emitPoint.y = std::max(0.0f, std::min(emitPoint.y, float(mCfg.screenHeight-1)));
+                    emitTouchPoint(emitPoint);
+                }
             }
 
             // Clean up old points
@@ -843,7 +866,7 @@ void VirtualTouchDevice::Impl::senderLoop(){
         TouchPoint a, b;
         TouchPoint out;
 
-        // Only generate events if we have bracketing points
+        // Try to find bracketing points for interpolation
         if(findBracketing(target, a, b)){
             out = interpolate(a, b, target);
 
@@ -868,8 +891,37 @@ void VirtualTouchDevice::Impl::senderLoop(){
 
                 emitTouchPoint(out);
             }
+        } else if (!mProcessingBuffer.empty()) {
+            // If we can't find bracketing points but have data, emit the latest point as-is
+            // This handles the case where we have 1 or 2 points but can't interpolate yet
+            auto& latestPoint = mProcessingBuffer.back();
+            TouchPoint emitPoint = latestPoint;
+
+            // Only emit if this is very close to the actual input timing to avoid duplicates
+            auto timeDiff = toSeconds(target - latestPoint.ts);
+            if (timeDiff >= -0.01 && timeDiff < 0.01) { // Within 10ms of the actual input
+                bool shouldEmit = false;
+
+                if (emitPoint.touching) {
+                    // Always emit touching events
+                    shouldEmit = true;
+                } else if (!mHasEmittedRelease) {
+                    // Only emit the first release event for this sequence
+                    shouldEmit = true;
+                    mHasEmittedRelease = true;
+                }
+
+                if (shouldEmit) {
+                    if(mSmoother) {
+                        emitPoint = mSmoother->smooth(emitPoint);
+                    }
+                    emitPoint.x = std::max(0.0f, std::min(emitPoint.x, float(mCfg.screenWidth-1)));
+                    emitPoint.y = std::max(0.0f, std::min(emitPoint.y, float(mCfg.screenHeight-1)));
+
+                    emitTouchPoint(emitPoint);
+                }
+            }
         }
-        // If findBracketing returns false, we don't generate any events for this tick
 
         // Clear buffer if touch sequence is complete (no active touch and no new input expected)
         if (!mHasActiveTouch && !mProcessingBuffer.empty()) {
