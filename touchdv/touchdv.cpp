@@ -406,15 +406,14 @@ int main(){
     cfg.touchTimeoutMs = 200.0;
     cfg.deviceName = "TouchDV Gesture Tester";
 
-    VirtualTouchDevice vdev(cfg);
-
     // Configure OneEuro smoother for smooth gestures
-    SmoothingConfig smoothConfig;
-    smoothConfig.oneEuroFreq = 120.0;
-    smoothConfig.oneEuroMinCutoff = 1.0;
-    smoothConfig.oneEuroBeta = 0.007;
-    smoothConfig.oneEuroDCutoff = 1.0;
-    vdev.setSmoothingType(SmoothingType::OneEuro, smoothConfig);
+    cfg.smoothingType = SmoothingType::OneEuro;
+    cfg.oneEuroFreq = 120.0;
+    cfg.oneEuroMinCutoff = 1.0;
+    cfg.oneEuroBeta = 0.007;
+    cfg.oneEuroDCutoff = 1.0;
+
+    VirtualTouchDevice vdev(cfg);
 
     if (!vdev.start()) {
         std::cerr << "Failed to start virtual touch device\n";

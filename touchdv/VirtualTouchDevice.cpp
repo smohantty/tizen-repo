@@ -27,10 +27,34 @@ using namespace std::chrono;
 
 namespace vtd {
 
+// --------------------- Config Implementation ---------------------
+Config Config::getDefault() {
+    Config cfg;
+    // Default values are already set in the struct definition
+    return cfg;
+}
+
 // --------------------- Internal Utility Functions ---------------------
 static double toSeconds(steady_clock::duration d) {
     return duration_cast<duration<double>>(d).count();
 }
+
+// --------------------- Internal Smoothing Config ---------------------
+// Internal structure for smoothing algorithm parameters
+struct SmoothingConfig {
+    // EMA parameters
+    double emaAlpha = 0.5;
+
+    // Kalman parameters
+    double kalmanQ = 0.01;  // Process noise
+    double kalmanR = 1.0;   // Measurement noise
+
+    // OneEuro parameters
+    double oneEuroFreq = 120.0;
+    double oneEuroMinCutoff = 1.0;
+    double oneEuroBeta = 0.007;
+    double oneEuroDCutoff = 1.0;
+};
 
 // --------------------- Touch Device Interface ---------------------
 // Abstract interface for touch devices (uinput, mock, etc.)
@@ -341,7 +365,6 @@ public:
     bool start();
     void stop();
     void pushInputPoint(const TouchPoint& p);
-    void setSmoothingType(SmoothingType type, const SmoothingConfig& config);
 
     // Event callback interface
     void setEventCallback(std::function<void(const TouchPoint&)> callback);
@@ -382,10 +405,17 @@ private:
 // --------------------- VirtualTouchDevice::Impl Implementation ---------------------
 VirtualTouchDevice::Impl::Impl(const Config& cfg)
     : mCfg(cfg) {
-    // Initialize with EMA smoothing by default
-    SmoothingConfig smoothConfig;
-    smoothConfig.emaAlpha = cfg.emaAlpha;
-    mSmoother = createSmoothingStrategy(SmoothingType::EMA, smoothConfig);
+    // Initialize smoothing from config - create SmoothingConfig from flattened parameters
+    SmoothingConfig smoothingConfig;
+    smoothingConfig.emaAlpha = cfg.emaAlpha;
+    smoothingConfig.kalmanQ = cfg.kalmanQ;
+    smoothingConfig.kalmanR = cfg.kalmanR;
+    smoothingConfig.oneEuroFreq = cfg.oneEuroFreq;
+    smoothingConfig.oneEuroMinCutoff = cfg.oneEuroMinCutoff;
+    smoothingConfig.oneEuroBeta = cfg.oneEuroBeta;
+    smoothingConfig.oneEuroDCutoff = cfg.oneEuroDCutoff;
+
+    mSmoother = createSmoothingStrategy(cfg.smoothingType, smoothingConfig);
 
     // Create appropriate touch device
     mTouchDevice = createTouchDevice();
@@ -411,10 +441,6 @@ void VirtualTouchDevice::stop() {
 
 void VirtualTouchDevice::pushInputPoint(const TouchPoint& p) {
     mImpl->pushInputPoint(p);
-}
-
-void VirtualTouchDevice::setSmoothingType(SmoothingType type, const SmoothingConfig& config) {
-    mImpl->setSmoothingType(type, config);
 }
 
 // Event callback interface
@@ -460,11 +486,6 @@ void VirtualTouchDevice::Impl::pushInputPoint(const TouchPoint& p) {
 
     // Wake up processing thread
     mCv.notify_one();
-}
-
-void VirtualTouchDevice::Impl::setSmoothingType(SmoothingType type, const SmoothingConfig& config) {
-    // No mutex needed - smoother is only used by processing thread
-    mSmoother = createSmoothingStrategy(type, config);
 }
 
 void VirtualTouchDevice::Impl::setEventCallback(std::function<void(const TouchPoint&)> callback) {

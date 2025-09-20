@@ -16,22 +16,6 @@ struct TouchPoint {
     bool touching = false;
 };
 
-// --------------------- Config ---------------------
-struct Config {
-    int screenWidth = 1920;
-    int screenHeight = 1080;
-    double inputRateHz = 30.0;
-    double outputRateHz = 120.0;
-    double emaAlpha = 0.45;
-    double maxInputHistorySec = 1.0;
-    double maxExtrapolationMs = 50.0;  // Maximum extrapolation time in milliseconds
-    double touchTimeoutMs = 200.0;     // Auto-release touch after this timeout (0 = disabled)
-    std::string deviceName = "Virtual IR Touch";
-
-    // Touch sequence handling - optimized for discrete touch patterns (TTTTTR)
-    double touchTransitionThreshold = 0.1; // Threshold for touch state transitions (0.0-0.5)
-};
-
 // --------------------- Smoothing Strategies ---------------------
 enum class SmoothingType {
     None,           // No smoothing
@@ -40,10 +24,25 @@ enum class SmoothingType {
     OneEuro         // 1-Euro filter
 };
 
-// Configuration for specific smoothing algorithms
-struct SmoothingConfig {
+// --------------------- Config ---------------------
+struct Config {
+    int screenWidth = 1920;
+    int screenHeight = 1080;
+    double inputRateHz = 30.0;
+    double outputRateHz = 120.0;
+    double maxInputHistorySec = 1.0;
+    double maxExtrapolationMs = 50.0;  // Maximum extrapolation time in milliseconds
+    double touchTimeoutMs = 200.0;     // Auto-release touch after this timeout (0 = disabled)
+    std::string deviceName = "Virtual IR Touch";
+
+    // Touch sequence handling - optimized for discrete touch patterns (TTTTTR)
+    double touchTransitionThreshold = 0.1; // Threshold for touch state transitions (0.0-0.5)
+
+    // Smoothing configuration
+    SmoothingType smoothingType = SmoothingType::EMA;
+
     // EMA parameters
-    double emaAlpha = 0.5;
+    double emaAlpha = 0.45;
 
     // Kalman parameters
     double kalmanQ = 0.01;  // Process noise
@@ -54,6 +53,9 @@ struct SmoothingConfig {
     double oneEuroMinCutoff = 1.0;
     double oneEuroBeta = 0.007;
     double oneEuroDCutoff = 1.0;
+
+    // Default configuration factory
+    static Config getDefault();
 };
 
 class VirtualTouchDevice {
@@ -64,7 +66,6 @@ public:
     bool start();
     void stop();
     void pushInputPoint(const TouchPoint& p);
-    void setSmoothingType(SmoothingType type, const SmoothingConfig& config = SmoothingConfig{});
 
     // Event callback interface (works with all device types)
     void setEventCallback(std::function<void(const TouchPoint&)> callback);
