@@ -47,39 +47,41 @@ class FileRecorder {
 private:
     std::vector<TouchPoint> mRecordedEvents;
     std::string mFilePath;
-    std::string mRecordType;  // "raw_input" or "upsampled_output"
+    bool mRecordRawInput{true};
     Config mConfig;
-    mutable std::mutex mRecordMutex;
 
 public:
-    FileRecorder(const std::string& filePath, const std::string& recordType, const Config& config)
-        : mFilePath(filePath), mRecordType(recordType), mConfig(config) {
+    FileRecorder(const std::string& filePath, const Config& config, bool recordRawInput = true)
+        : mFilePath(filePath), mRecordRawInput(recordRawInput), mConfig(config) {
         mRecordedEvents.reserve(10000); // Reserve space for many events
     }
 
     void recordEvent(const TouchPoint& point) {
-        std::lock_guard<std::mutex> lock(mRecordMutex);
         mRecordedEvents.push_back(point);
     }
 
     void saveToFile() {
-        std::lock_guard<std::mutex> lock(mRecordMutex);
         if (mRecordedEvents.empty()) return;
 
         std::ofstream file(mFilePath);
         if (!file.is_open()) {
-            std::cerr << "Failed to open " << mRecordType << " record file: " << mFilePath << std::endl;
+            std::cerr << "Failed to open " << (mRecordRawInput ? "raw_input" : "upsampled_output") << " record file: " << mFilePath << std::endl;
             return;
         }
 
         file << "{\n";
-        file << "  \"recordType\": \"" << mRecordType << "\",\n";
         file << "  \"deviceName\": \"" << mConfig.deviceName << "\",\n";
         file << "  \"screenWidth\": " << mConfig.screenWidth << ",\n";
         file << "  \"screenHeight\": " << mConfig.screenHeight << ",\n";
-        file << "  \"inputRateHz\": " << mConfig.inputRateHz << ",\n";
-        file << "  \"outputRateHz\": " << mConfig.outputRateHz << ",\n";
-        file << "  \"smoothingType\": \"" << static_cast<int>(mConfig.smoothingType) << "\",\n";
+        if (mRecordRawInput) {
+            file << "  \"recordType\": \"raw_ir_input\",\n";
+            file << "  \"inputRateHz\": " << mConfig.inputRateHz << ",\n";
+        } else {
+            file << "  \"recordType\": \"upsampled_output\",\n";
+            file << "  \"inputRateHz\": " << mConfig.inputRateHz << ",\n";
+            file << "  \"outputRateHz\": " << mConfig.outputRateHz << ",\n";
+            file << "  \"smoothingType\": \"" << static_cast<int>(mConfig.smoothingType) << "\",\n";
+        }
         file << "  \"totalEvents\": " << mRecordedEvents.size() << ",\n";
         file << "  \"events\": [\n";
 
@@ -104,17 +106,15 @@ public:
         file << "}\n";
         file.close();
 
-        std::cout << "Recorded " << mRecordedEvents.size() << " " << mRecordType
+        std::cout << "Recorded " << mRecordedEvents.size()
                   << " events to: " << mFilePath << std::endl;
     }
 
     size_t getEventCount() const {
-        std::lock_guard<std::mutex> lock(mRecordMutex);
         return mRecordedEvents.size();
     }
 
     void clear() {
-        std::lock_guard<std::mutex> lock(mRecordMutex);
         mRecordedEvents.clear();
     }
 };
@@ -485,12 +485,12 @@ VirtualTouchDevice::Impl::Impl(const Config& cfg)
     // Initialize recording functionality if enabled
     if (cfg.enableRawInputRecording) {
         mRawInputRecorder = std::make_unique<FileRecorder>(
-            cfg.rawInputRecordPath, "raw_input", cfg);
+            cfg.rawInputRecordPath, cfg, true);
     }
 
     if (cfg.enableUpsampledRecording) {
         mUpsampledRecorder = std::make_unique<FileRecorder>(
-            cfg.upsampledRecordPath, "upsampled_output", cfg);
+            cfg.upsampledRecordPath,  cfg, false);
     }
 }
 
