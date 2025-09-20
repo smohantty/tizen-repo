@@ -32,6 +32,16 @@ static double toSeconds(steady_clock::duration d) {
     return duration_cast<duration<double>>(d).count();
 }
 
+// --------------------- Touch Device Interface ---------------------
+// Abstract interface for touch devices (uinput, mock, etc.)
+class TouchDevice {
+public:
+    virtual ~TouchDevice() = default;
+    virtual bool setup(const Config& cfg) = 0;
+    virtual void teardown() = 0;
+    virtual void emit(const TouchPoint& point) = 0;
+};
+
 // --------------------- Touch Device Implementations ---------------------
 
 #ifdef __linux__

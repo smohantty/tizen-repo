@@ -33,16 +33,6 @@ struct Config {
     double touchTransitionThreshold = 0.1; // Threshold for touch state transitions (0.0-0.5)
 };
 
-// --------------------- Touch Device Interface ---------------------
-// Abstract interface for touch devices (uinput, mock, etc.)
-class TouchDevice {
-public:
-    virtual ~TouchDevice() = default;
-    virtual bool setup(const Config& cfg) = 0;
-    virtual void teardown() = 0;
-    virtual void emit(const TouchPoint& point) = 0;
-};
-
 // --------------------- Smoothing Strategies ---------------------
 enum class SmoothingType {
     None,           // No smoothing
