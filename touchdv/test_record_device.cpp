@@ -56,6 +56,31 @@ void test_swipe_1(InputDevice& device)
     device.playGesture(inputPoints);
 }
 
+void test_pan_change_direction(InputDevice& device)
+{
+    auto now = std::chrono::steady_clock::now();
+    std::vector<TouchPoint> inputPoints = {
+        {now, 100.0f, 200.0f, true},                    // Touch down
+        {now + std::chrono::milliseconds(33), 120.0f, 202.0f, true},  // Move right
+        {now + std::chrono::milliseconds(67), 140.0f, 204.0f, true},  // Continue right
+        {now + std::chrono::milliseconds(100), 160.0f, 205.0f, true}, // Continue right
+        {now + std::chrono::milliseconds(133), 180.0f, 205.0f, true}, // Continue right
+        {now + std::chrono::milliseconds(167), 200.0f, 205.0f, true}, // Peak right position
+        {now + std::chrono::milliseconds(200), 180.0f, 205.0f, true}, // Start moving left
+        {now + std::chrono::milliseconds(233), 160.0f, 205.0f, true}, // Continue left
+        {now + std::chrono::milliseconds(267), 140.0f, 205.0f, true}, // Continue left
+        {now + std::chrono::milliseconds(300), 120.0f, 205.0f, true}, // Continue left
+        {now + std::chrono::milliseconds(333), 100.0f, 205.0f, true}, // Continue left
+        {now + std::chrono::milliseconds(367), 80.0f, 205.0f, true},  // Peak left position
+        {now + std::chrono::milliseconds(400), 100.0f, 205.0f, true}, // Start moving right again
+        {now + std::chrono::milliseconds(433), 120.0f, 205.0f, true}, // Continue right
+        {now + std::chrono::milliseconds(467), 140.0f, 205.0f, true}, // Continue right
+
+        {now + std::chrono::milliseconds(500), 150.0f, 205.0f, false} // Touch release
+    };
+    device.playGesture(inputPoints);
+}
+
 void test_swipe_missing_release(InputDevice& device)
 {
     auto now = std::chrono::steady_clock::now();
@@ -71,7 +96,8 @@ void test_swipe_missing_release(InputDevice& device)
 int main() {
     InputDevice device;
     //test_swipe_1(device);
-    test_swipe_missing_release(device);
+    //test_swipe_missing_release(device);
+    test_pan_change_direction(device);
 
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
