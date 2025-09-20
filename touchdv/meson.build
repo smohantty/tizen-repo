@@ -21,22 +21,13 @@ realworld_test_exe = executable('test_realworld_gestures',
   dependencies : [thread_dep],
   install : false)
 
-# Legacy test executables (use deprecated interfaces - commented out)
-# gesture_test_exe = executable('gesture_tests',
-#   ['gesture_tests.cpp'] + touchdev_sources,
-#   dependencies : [thread_dep],
-#   install : false)
-#
-# discrete_test_exe = executable('test_discrete_only',
-#   ['test_discrete_only.cpp'] + touchdev_sources,
-#   dependencies : [thread_dep],
-#   install : false)
-#
-# continuous_test_exe = executable('test_continuous_gestures',
-#   ['test_continuous_gestures.cpp'] + touchdev_sources,
-#   dependencies : [thread_dep],
-#   install : false)
+# Record device test executable
+record_test_exe = executable('test_record_device',
+  ['test_record_device.cpp'] + touchdev_sources,
+  dependencies : [thread_dep],
+  install : false)
 
 # Tests
 test('basic_demo', exe)
 test('realworld_gestures', realworld_test_exe)
+test('record_device', record_test_exe)

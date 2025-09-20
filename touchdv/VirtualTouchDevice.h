@@ -44,7 +44,7 @@ struct Config {
 
     // Device configuration
     DeviceType deviceType = DeviceType::Mock; // Device type selection
-    std::string recordFilePath = "touch_events.json"; // File path for Record device
+    std::string recordFilePath = "./touch_events.json"; // File path for Record device
 
     // Touch sequence handling - optimized for discrete touch patterns (TTTTTR)
     double touchTransitionThreshold = 0.1; // Threshold for touch state transitions (0.0-0.5)
