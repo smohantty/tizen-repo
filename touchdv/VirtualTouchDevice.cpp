@@ -689,6 +689,17 @@ void VirtualTouchDevice::Impl::senderLoop(){
             while(!mProcessingBuffer.empty() && mProcessingBuffer.front().ts < cutoff) {
                 mProcessingBuffer.pop_front();
             }
+            // Explicit release
+            if (!newInput.touching) {
+                mHasActiveTouch = false;
+                if (mTouchDevice) {
+                    mTouchDevice->emit(newInput);
+                }
+                mProcessingBuffer.clear(); // flush sequence
+                std::unique_lock<std::mutex> lk(mInputMutex);
+                mCv.wait_until(lk, nextTick, [this](){return !mRunning;});
+                continue;
+            }
         }
 
         // Check for touch timeout and auto-release if needed
@@ -703,12 +714,17 @@ void VirtualTouchDevice::Impl::senderLoop(){
                 autoReleasePoint.pressure = 0;
                 autoReleasePoint.ts = currentTime;
 
+                if (mTouchDevice) {
+                    mTouchDevice->emit(autoReleasePoint);
+                }
+
                 mProcessingBuffer.push_back(autoReleasePoint);
                 mHasActiveTouch = false;
 
-                // Optional: Log timeout for debugging
-                // std::cout << "Auto-released touch after "
-                //          << timeSinceLastInput * 1000.0 << "ms timeout" << std::endl;
+                std::unique_lock<std::mutex> lk(mInputMutex);
+                mCv.wait_until(lk, nextTick, [this](){return !mRunning;});
+                continue;
+
             }
         }
 
@@ -723,7 +739,12 @@ void VirtualTouchDevice::Impl::senderLoop(){
             if(mSmoother) {
                 out = mSmoother->smooth(out);
             }
-            hasOutput = true;
+            out.x = std::max(0.0f, std::min(out.x, float(mCfg.screenWidth-1)));
+            out.y = std::max(0.0f, std::min(out.y, float(mCfg.screenHeight-1)));
+
+            if (mTouchDevice) {
+                mTouchDevice->emit(out);
+            }
         }
 
         if(hasOutput) {
