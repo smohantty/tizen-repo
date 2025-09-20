@@ -38,22 +38,6 @@ static double toSeconds(steady_clock::duration d) {
     return duration_cast<duration<double>>(d).count();
 }
 
-// --------------------- Internal Smoothing Config ---------------------
-// Internal structure for smoothing algorithm parameters
-struct SmoothingConfig {
-    // EMA parameters
-    double emaAlpha = 0.5;
-
-    // Kalman parameters
-    double kalmanQ = 0.01;  // Process noise
-    double kalmanR = 1.0;   // Measurement noise
-
-    // OneEuro parameters
-    double oneEuroFreq = 120.0;
-    double oneEuroMinCutoff = 1.0;
-    double oneEuroBeta = 0.007;
-    double oneEuroDCutoff = 1.0;
-};
 
 // --------------------- Touch Device Interface ---------------------
 // Abstract interface for touch devices (uinput, mock, etc.)
@@ -250,8 +234,8 @@ public:
 };
 
 // Factory function to create smoothing strategies
-std::unique_ptr<SmoothingStrategy> createSmoothingStrategy(SmoothingType type, const SmoothingConfig& config) {
-    switch (type) {
+std::unique_ptr<SmoothingStrategy> createSmoothingStrategy(const Config& config) {
+    switch (config.smoothingType) {
         case SmoothingType::None:
             return std::make_unique<NoSmoothing>();
         case SmoothingType::EMA:
@@ -409,17 +393,8 @@ VirtualTouchDevice::Impl::Impl(const Config& cfg)
     size_t expectedSize = static_cast<size_t>(cfg.inputRateHz * cfg.maxInputHistorySec * 1.5);
     mProcessingBuffer.reserve(std::max(expectedSize, size_t(100))); // Minimum 100 elements
 
-    // Initialize smoothing from config - create SmoothingConfig from flattened parameters
-    SmoothingConfig smoothingConfig;
-    smoothingConfig.emaAlpha = cfg.emaAlpha;
-    smoothingConfig.kalmanQ = cfg.kalmanQ;
-    smoothingConfig.kalmanR = cfg.kalmanR;
-    smoothingConfig.oneEuroFreq = cfg.oneEuroFreq;
-    smoothingConfig.oneEuroMinCutoff = cfg.oneEuroMinCutoff;
-    smoothingConfig.oneEuroBeta = cfg.oneEuroBeta;
-    smoothingConfig.oneEuroDCutoff = cfg.oneEuroDCutoff;
-
-    mSmoother = createSmoothingStrategy(cfg.smoothingType, smoothingConfig);
+    // Initialize smoothing from config
+    mSmoother = createSmoothingStrategy(cfg);
 
     // Create appropriate touch device
     mTouchDevice = createTouchDevice();
