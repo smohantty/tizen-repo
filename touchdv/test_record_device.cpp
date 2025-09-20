@@ -5,6 +5,7 @@
 #include <chrono>
 #include <fstream>
 #include <cassert>
+#include <vector>
 
 using namespace vtd;
 
@@ -21,7 +22,8 @@ int main() {
     cfg.screenWidth = 1920;
     cfg.screenHeight = 1080;
     cfg.deviceName = "Recording Test Device";
-    cfg.smoothingType = SmoothingType::None; // Use raw data for testing
+    cfg.smoothingType = SmoothingType::EMA; // Use raw data for testing
+    cfg.maxExtrapolationMs = 50.0; // Keep default extrapolation limit
 
     VirtualTouchDevice device(cfg);
 
@@ -30,36 +32,39 @@ int main() {
         return 1;
     }
 
-    std::cout << "📝 Generating test touch events..." << std::endl;
+    std::cout << "📝 Generating test touch events at 30fps intervals..." << std::endl;
 
     auto now = std::chrono::steady_clock::now();
 
-    // Simulate a tap gesture: down -> move -> up
-    TouchPoint point1;
-    point1.ts = now;
-    point1.x = 100.0f;
-    point1.y = 200.0f;
-    point1.touching = true;
-    device.pushInputPoint(point1);
+    // Simulate realistic touch input at 30fps (33.33ms intervals)
+    std::vector<TouchPoint> inputPoints = {
+        {now, 100.0f, 200.0f, true},                    // Touch down
+        {now + std::chrono::milliseconds(33), 120.0f, 202.0f, true},  // Small movement
+        {now + std::chrono::milliseconds(67), 140.0f, 204.0f, true},  // Continue movement
+        {now + std::chrono::milliseconds(100), 160.0f, 205.0f, true}, // Final position
+        {now + std::chrono::milliseconds(133), 180.0f, 205.0f, false} // Touch release
+    };
 
-    // Small movement during touch
-    TouchPoint point2;
-    point2.ts = now + std::chrono::milliseconds(50);
-    point2.x = 105.0f;
-    point2.y = 205.0f;
-    point2.touching = true;
-    device.pushInputPoint(point2);
+    // Send events at realistic 30fps timing
+    for (size_t i = 0; i < inputPoints.size(); ++i) {
+        const auto& point = inputPoints[i];
+        device.pushInputPoint(point);
 
-    // Touch release
-    TouchPoint point3;
-    point3.ts = now + std::chrono::milliseconds(100);
-    point3.x = 105.0f;
-    point3.y = 205.0f;
-    point3.touching = false;
-    device.pushInputPoint(point3);
+        std::cout << "  Sent point " << (i+1) << " at "
+                  << std::chrono::duration_cast<std::chrono::milliseconds>(
+                     point.ts.time_since_epoch()).count() % 10000 << "ms"
+                  << " (" << point.x << ", " << point.y << ", "
+                  << (point.touching ? "touch" : "release") << ")" << std::endl;
 
-    // Let the device process the events
-    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+        // Wait for 30fps interval (33.33ms) before sending next point
+        if (i < inputPoints.size() - 1) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(34)); // 34ms to account for processing
+        }
+    }
+
+    // Let the device process the events for a while
+    std::cout << "⏳ Processing events..." << std::endl;
+    std::this_thread::sleep_for(std::chrono::milliseconds(1000));
 
     std::cout << "⏹️  Stopping device and saving recordings..." << std::endl;
     device.stop();

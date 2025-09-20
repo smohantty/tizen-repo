@@ -446,6 +446,7 @@ private:
     // Touch timeout tracking (processing thread only)
     std::chrono::steady_clock::time_point mLastInputTime;
     bool mHasActiveTouch = false;
+    bool mHasEmittedRelease = false;  // Track if release event has been emitted for current sequence
 
     std::condition_variable mCv;
     std::atomic<bool> mRunning{false};
@@ -613,8 +614,8 @@ bool VirtualTouchDevice::Impl::findBracketing(steady_clock::time_point target, T
         double future = toSeconds(target - last.ts);
         auto extrapolationLimit = std::chrono::duration<double, std::milli>(mCfg.maxExtrapolationMs);
         if (future > extrapolationLimit.count() / 1000.0) {
-            a = b = last;
-            return true;
+            // Don't generate events beyond extrapolation limit
+            return false;
         }
 
         // Extrapolate if we have velocity information and sufficient confidence
@@ -803,14 +804,13 @@ void VirtualTouchDevice::Impl::senderLoop(){
             if (it != mProcessingBuffer.begin()) {
                 mProcessingBuffer.erase(mProcessingBuffer.begin(), it);
             }
-            // Explicit release
+
+            // Update active touch state for release events
             if (!newInput.touching) {
                 mHasActiveTouch = false;
-                emitTouchPoint(newInput);
-                mProcessingBuffer.clear(); // flush sequence
-                std::unique_lock<std::mutex> lk(mInputMutex);
-                mCv.wait_until(lk, nextTick, [this](){return !mRunning;});
-                continue;
+            } else {
+                // New touch sequence starting, reset release flag
+                mHasEmittedRelease = false;
             }
         }
 
@@ -829,6 +829,7 @@ void VirtualTouchDevice::Impl::senderLoop(){
 
                 mProcessingBuffer.push_back(autoReleasePoint);
                 mHasActiveTouch = false;
+                mHasEmittedRelease = true;
 
                 std::unique_lock<std::mutex> lk(mInputMutex);
                 mCv.wait_until(lk, nextTick, [this](){return !mRunning;});
@@ -842,15 +843,46 @@ void VirtualTouchDevice::Impl::senderLoop(){
         TouchPoint a, b;
         TouchPoint out;
 
+        // Only generate events if we have bracketing points
         if(findBracketing(target, a, b)){
             out = interpolate(a, b, target);
-            if(mSmoother) {
-                out = mSmoother->smooth(out);
-            }
-            out.x = std::max(0.0f, std::min(out.x, float(mCfg.screenWidth-1)));
-            out.y = std::max(0.0f, std::min(out.y, float(mCfg.screenHeight-1)));
 
-            emitTouchPoint(out);
+            // Emit events based on touch state and release tracking
+            bool shouldEmit = false;
+
+            if (out.touching) {
+                // Always emit touching events
+                shouldEmit = true;
+            } else if (!mHasEmittedRelease) {
+                // Only emit the first release event for this sequence
+                shouldEmit = true;
+                mHasEmittedRelease = true;
+            }
+
+            if (shouldEmit) {
+                if(mSmoother) {
+                    out = mSmoother->smooth(out);
+                }
+                out.x = std::max(0.0f, std::min(out.x, float(mCfg.screenWidth-1)));
+                out.y = std::max(0.0f, std::min(out.y, float(mCfg.screenHeight-1)));
+
+                emitTouchPoint(out);
+            }
+        }
+        // If findBracketing returns false, we don't generate any events for this tick
+
+        // Clear buffer if touch sequence is complete (no active touch and no new input expected)
+        if (!mHasActiveTouch && !mProcessingBuffer.empty()) {
+            // Check if the last point in buffer is a release event and enough time has passed
+            auto lastPoint = mProcessingBuffer.back();
+            if (!lastPoint.touching) {
+                auto timeSinceLastPoint = toSeconds(target - lastPoint.ts);
+                // Clear buffer after 100ms of inactivity following a release
+                if (timeSinceLastPoint > 0.1) {
+                    mProcessingBuffer.clear();
+                    mHasEmittedRelease = false;  // Reset for next sequence
+                }
+            }
         }
 
         // Wait until next scheduled tick (minimal lock for condition variable)
