@@ -467,6 +467,7 @@ private:
     void senderLoop();
     double calculateVelocityConfidence(const std::vector<TouchPoint>& buffer, size_t count = 3);
     void emitTouchPoint(const TouchPoint& point); // Helper to emit with callback
+    void cleanupOldPoints(steady_clock::time_point currentTime); // Helper to clean up old buffer points
 };
 
 // --------------------- VirtualTouchDevice::Impl Implementation ---------------------
@@ -594,6 +595,18 @@ void VirtualTouchDevice::Impl::emitTouchPoint(const TouchPoint& point) {
     // Then emit to the backend device
     if (mTouchDevice) {
         mTouchDevice->emit(point);
+    }
+}
+
+void VirtualTouchDevice::Impl::cleanupOldPoints(steady_clock::time_point currentTime) {
+    // Clean up old points that are beyond the history window
+    auto cutoff = currentTime - duration<double>(mCfg.maxInputHistorySec);
+    auto it = mProcessingBuffer.begin();
+    while (it != mProcessingBuffer.end() && it->ts < cutoff) {
+        ++it;
+    }
+    if (it != mProcessingBuffer.begin()) {
+        mProcessingBuffer.erase(mProcessingBuffer.begin(), it);
     }
 }
 
@@ -764,185 +777,87 @@ TouchPoint VirtualTouchDevice::Impl::interpolate(const TouchPoint& a,const Touch
 
 void VirtualTouchDevice::Impl::senderLoop(){
     using clk=steady_clock;
-    double period=1.0/mCfg.outputRateHz;
-    auto nextTick=clk::now();
+    double period = 1.0 / mCfg.outputRateHz;
 
-    while(mRunning){
-        nextTick += std::chrono::duration_cast<steady_clock::duration>(duration<double>(period));
+    while (mRunning) {
+        auto currentTick = clk::now();
 
-        // Check for new input with minimal lock time
+        // Check for new input and update timestamp to current tick
         bool hasNewInput = false;
         TouchPoint newInput;
         {
             std::lock_guard<std::mutex> g(mInputMutex);
             if (mHasNewInput) {
                 newInput = mLatestInput;
+                newInput.ts = currentTick; // Update timestamp to current tick
                 hasNewInput = true;
                 mHasNewInput = false;
             }
         }
 
-        // If we have new input, add it to processing buffer (no lock needed)
+        // Handle new input: add to buffer and emit if touching
         if (hasNewInput) {
-            // Validate timestamp ordering - reject points too far in the past
-            if (!mProcessingBuffer.empty()) {
-                auto timeDiff = toSeconds(newInput.ts - mProcessingBuffer.back().ts);
-                if (timeDiff >= -0.1) { // Not more than 100ms in the past
-                    mProcessingBuffer.push_back(newInput);
-                    mLastInputTime = newInput.ts;
-                    mHasActiveTouch = newInput.touching;
+            // Add to processing buffer
+            mProcessingBuffer.push_back(newInput);
+            mLastInputTime = newInput.ts;
+            mHasActiveTouch = newInput.touching;
 
-                    // Emit the new input point immediately (no smoothing for raw events)
-                    // Exception: Don't emit release events immediately - let interpolation handle them
-                    if (newInput.touching) {
-                        TouchPoint emitPoint = newInput;
-                        // Don't apply smoothing to raw input events - they should be sent as-is
-                        emitPoint.x = std::max(0.0f, std::min(emitPoint.x, float(mCfg.screenWidth-1)));
-                        emitPoint.y = std::max(0.0f, std::min(emitPoint.y, float(mCfg.screenHeight-1)));
-                        emitTouchPoint(emitPoint);
-                    }
-                }
+            // Emit touching events immediately (raw, no smoothing)
+            if (newInput.touching) {
+                TouchPoint emitPoint = newInput;
+                emitPoint.x = std::max(0.0f, std::min(emitPoint.x, float(mCfg.screenWidth-1)));
+                emitPoint.y = std::max(0.0f, std::min(emitPoint.y, float(mCfg.screenHeight-1)));
+                emitTouchPoint(emitPoint);
             } else {
-                mProcessingBuffer.push_back(newInput);
-                mLastInputTime = newInput.ts;
-                mHasActiveTouch = newInput.touching;
-
-                // Emit the first input point immediately (no smoothing for raw events)
-                // Exception: Don't emit release events immediately - let interpolation handle them
-                if (newInput.touching) {
-                    TouchPoint emitPoint = newInput;
-                    // Don't apply smoothing to raw input events - they should be sent as-is
-                    emitPoint.x = std::max(0.0f, std::min(emitPoint.x, float(mCfg.screenWidth-1)));
-                    emitPoint.y = std::max(0.0f, std::min(emitPoint.y, float(mCfg.screenHeight-1)));
-                    emitTouchPoint(emitPoint);
-                }
-            }
-
-            // Clean up old points
-            auto cutoff = newInput.ts - duration<double>(mCfg.maxInputHistorySec);
-            auto it = mProcessingBuffer.begin();
-            while (it != mProcessingBuffer.end() && it->ts < cutoff) {
-                ++it;
-            }
-            if (it != mProcessingBuffer.begin()) {
-                mProcessingBuffer.erase(mProcessingBuffer.begin(), it);
-            }
-
-            // Update active touch state for release events
-            if (!newInput.touching) {
-                mHasActiveTouch = false;
-            } else {
-                // New touch sequence starting, reset release flag
+                // Reset release flag for new touch sequences
                 mHasEmittedRelease = false;
             }
         }
 
-        // Check for touch timeout and auto-release if needed
-        if (mCfg.touchTimeoutMs > 0.0 && mHasActiveTouch && !mProcessingBuffer.empty()) {
-            auto currentTime = nextTick; // Use same time as processing target
-            auto timeSinceLastInput = toSeconds(currentTime - mLastInputTime);
+        // Generate upsampled data if we have enough points for interpolation
+        if (mProcessingBuffer.size() >= 2) {
+            TouchPoint a, b;
+            if (findBracketing(currentTick, a, b)) {
+                TouchPoint out = interpolate(a, b, currentTick);
 
-            if (timeSinceLastInput * 1000.0 > mCfg.touchTimeoutMs) {
-                // Force release due to timeout
-                TouchPoint autoReleasePoint = mProcessingBuffer.back();
-                autoReleasePoint.touching = false;
-                autoReleasePoint.ts = currentTime;
-
-                emitTouchPoint(autoReleasePoint);
-
-                mProcessingBuffer.push_back(autoReleasePoint);
-                mHasActiveTouch = false;
-                mHasEmittedRelease = true;
-
-                std::unique_lock<std::mutex> lk(mInputMutex);
-                mCv.wait_until(lk, nextTick, [this](){return !mRunning;});
-                continue;
-
-            }
-        }
-
-        // Process output for this tick (no locks needed)
-        auto target = nextTick;
-        TouchPoint a, b;
-        TouchPoint out;
-
-        // Try to find bracketing points for interpolation
-        if(findBracketing(target, a, b)){
-            out = interpolate(a, b, target);
-
-            // Emit events based on touch state and release tracking
-            bool shouldEmit = false;
-
-            if (out.touching) {
-                // Always emit touching events
-                shouldEmit = true;
-            } else if (!mHasEmittedRelease) {
-                // Only emit the first release event for this sequence
-                shouldEmit = true;
-                mHasEmittedRelease = true;
-            }
-
-            if (shouldEmit) {
-                if(mSmoother) {
+                // Apply smoothing to interpolated events
+                if (mSmoother) {
                     out = mSmoother->smooth(out);
                 }
                 out.x = std::max(0.0f, std::min(out.x, float(mCfg.screenWidth-1)));
                 out.y = std::max(0.0f, std::min(out.y, float(mCfg.screenHeight-1)));
 
-                emitTouchPoint(out);
-            }
-        } else if (!mProcessingBuffer.empty()) {
-            // If we can't find bracketing points but have data, emit the latest point as-is
-            // This handles the case where we have 1 or 2 points but can't interpolate yet
-            auto& latestPoint = mProcessingBuffer.back();
-            TouchPoint emitPoint = latestPoint;
-
-            // Only emit if this is very close to the actual input timing to avoid duplicates
-            auto timeDiff = toSeconds(target - latestPoint.ts);
-            if (timeDiff >= -0.01 && timeDiff < 0.01) { // Within 10ms of the actual input
-                bool shouldEmit = false;
-
-                if (emitPoint.touching) {
-                    // Always emit touching events
-                    shouldEmit = true;
-                } else if (!mHasEmittedRelease) {
-                    // Only emit the first release event for this sequence
-                    shouldEmit = true;
-                    mHasEmittedRelease = true;
-                }
-
-                if (shouldEmit) {
-                    if(mSmoother) {
-                        emitPoint = mSmoother->smooth(emitPoint);
+                // Emit interpolated events
+                if (out.touching || !mHasEmittedRelease) {
+                    emitTouchPoint(out);
+                    if (!out.touching) {
+                        mHasEmittedRelease = true;
                     }
-                    emitPoint.x = std::max(0.0f, std::min(emitPoint.x, float(mCfg.screenWidth-1)));
-                    emitPoint.y = std::max(0.0f, std::min(emitPoint.y, float(mCfg.screenHeight-1)));
-
-                    emitTouchPoint(emitPoint);
                 }
             }
         }
 
-        // Clear buffer if touch sequence is complete (no active touch and no new input expected)
+        // Clean up completed sequences and old points
         if (!mHasActiveTouch && !mProcessingBuffer.empty()) {
-            // Check if the last point in buffer is a release event and enough time has passed
             auto lastPoint = mProcessingBuffer.back();
             if (!lastPoint.touching) {
-                auto timeSinceLastPoint = toSeconds(target - lastPoint.ts);
-                // Clear buffer after 100ms of inactivity following a release
+                auto timeSinceLastPoint = toSeconds(currentTick - lastPoint.ts);
                 if (timeSinceLastPoint > 0.1) {
                     mProcessingBuffer.clear();
-                    mHasEmittedRelease = false;  // Reset for next sequence
+                    mHasEmittedRelease = false;
                 }
             }
         }
 
-        // Wait until next scheduled tick (minimal lock for condition variable)
-        std::unique_lock<std::mutex> lk(mInputMutex);
-        mCv.wait_until(lk, nextTick, [this](){return !mRunning;});
+        // Clean up old points periodically
+        cleanupOldPoints(currentTick);
+
+        // Wait for next tick using fixed interval
+        auto nextTick = currentTick + std::chrono::duration_cast<steady_clock::duration>(duration<double>(period));
+        std::this_thread::sleep_until(nextTick);
     }
 
-    // Send final release event only if there's an active touch
+    // Send final release if needed
     if (mHasActiveTouch && !mProcessingBuffer.empty()) {
         TouchPoint rel;
         rel.ts = clk::now();
