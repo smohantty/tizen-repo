@@ -518,7 +518,6 @@ void testRealWorldMixedGestures() {
     cfg.outputRateHz = 120.0; // High output rate for UI framework
     cfg.touchTimeoutMs = 0.0;
     cfg.maxInputHistorySec = 2.0;
-    cfg.touchTransitionThreshold = 0.05; // Configure touch transitions for clean gesture separation
 
     VirtualTouchDevice device(cfg);
 

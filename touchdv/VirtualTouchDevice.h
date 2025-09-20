@@ -50,8 +50,6 @@ struct Config {
     std::string rawInputRecordPath = "./raw_input.json";         // File path for raw input recording
     std::string upsampledRecordPath = "./upsampled_output.json"; // File path for upsampled recording
 
-    // Touch sequence handling - optimized for discrete touch patterns (TTTTTR)
-    double touchTransitionThreshold = 0.1; // Threshold for touch state transitions (0.0-0.5)
 
     // Smoothing configuration
     SmoothingType smoothingType = SmoothingType::EMA;

@@ -26,7 +26,7 @@ InputDevice()
     cfg.screenWidth = 1920;
     cfg.screenHeight = 1080;
     cfg.deviceName = "IR Device";
-    cfg.smoothingType = SmoothingType::EMA;
+    cfg.smoothingType = SmoothingType::None;
     cfg.maxExtrapolationMs = 50.0;
 
     mDevice = std::make_unique<vtd::VirtualTouchDevice>(cfg);

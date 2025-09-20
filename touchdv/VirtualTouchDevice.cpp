@@ -626,27 +626,7 @@ private:
         out.x = float((1.0 - u) * a.x + u * b.x);
         out.y = float((1.0 - u) * a.y + u * b.y);
 
-        // Intelligent touch state interpolation optimized for discrete sequences (TTTTTR pattern)
-        if (a.touching == b.touching) {
-            // Same state, keep it
-            out.touching = a.touching;
-        } else {
-            // State transition - use intelligent thresholds for discrete touch sequences
-            double threshold = mCfg.touchTransitionThreshold;
-            double releaseThreshold = 1.0 - mCfg.touchTransitionThreshold;
-
-            if (a.touching && !b.touching) {
-                // Touch to release: delay release to ensure clean gesture completion
-                // This handles cases where IR might miss the final release
-                out.touching = (u < releaseThreshold);
-            } else if (!a.touching && b.touching) {
-                // Release to touch: quick touch activation for responsive gestures
-                out.touching = (u >= threshold);
-            } else {
-                // Fallback for any other state combinations
-                out.touching = (u >= 0.5);
-            }
-        }
+        out.touching = true;
 
         return out;
     }
@@ -754,7 +734,6 @@ private:
                     mHasActiveTouch = true;
                     emitTouchPoint(newInput);
                 } else {
-                    std::cout<<"XX handleReleaseTouchPoint \n";
                     handleReleaseTouchPoint(newInput);
                 }
             } else { //handle upsampling if required.
@@ -764,7 +743,6 @@ private:
                         TouchPoint releasePoint = mProcessingBuffer.back();
                         releasePoint.ts = currentTick;
                         releasePoint.touching = false;
-                        std::cout<<"YY handleReleaseTouchPoint \n";
                         handleReleaseTouchPoint(releasePoint);
                     } else {
                         if (mProcessingBuffer.size() >= 2) {
