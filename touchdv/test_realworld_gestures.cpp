@@ -374,7 +374,6 @@ void executeGestureCommand(VirtualTouchDevice& device, const GestureSequenceGene
         up.x = pos.first;
         up.y = pos.second;
         up.touching = false;
-        up.pressure = 0;
         up.ts = startTime + milliseconds(static_cast<int>(cmd.durationMs));
         device.pushInputPoint(up);
 
@@ -395,7 +394,6 @@ void executeGestureCommand(VirtualTouchDevice& device, const GestureSequenceGene
         up1.x = pos.first;
         up1.y = pos.second;
         up1.touching = false;
-        up1.pressure = 0;
         up1.ts = startTime + milliseconds(static_cast<int>(cmd.durationMs));
         device.pushInputPoint(up1);
 
@@ -416,7 +414,6 @@ void executeGestureCommand(VirtualTouchDevice& device, const GestureSequenceGene
         up2.x = pos.first + 2;
         up2.y = pos.second + 2;
         up2.touching = false;
-        up2.pressure = 0;
         up2.ts = startTime + milliseconds(static_cast<int>(cmd.durationMs) * 2 + 100);
         device.pushInputPoint(up2);
 
@@ -446,7 +443,6 @@ void executeGestureCommand(VirtualTouchDevice& device, const GestureSequenceGene
         up.x = pos.first;
         up.y = pos.second;
         up.touching = false;
-        up.pressure = 0;
         up.ts = startTime + milliseconds(static_cast<int>(cmd.durationMs));
         device.pushInputPoint(up);
 
@@ -502,7 +498,6 @@ void executeGestureCommand(VirtualTouchDevice& device, const GestureSequenceGene
         up.x = endPos.first;
         up.y = endPos.second;
         up.touching = false;
-        up.pressure = 0;
         up.ts = startTime + milliseconds(static_cast<int>(cmd.durationMs));
         device.pushInputPoint(up);
     }

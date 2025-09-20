@@ -119,7 +119,6 @@ public:
         touch.x = params.x;
         touch.y = params.y;
         touch.touching = true;
-        touch.pressure = 150;
         mDevice.pushInputPoint(touch);
 
         // Hold briefly
@@ -129,7 +128,6 @@ public:
         TouchPoint release = touch;
         release.ts = steady_clock::now();
         release.touching = false;
-        release.pressure = 0;
         mDevice.pushInputPoint(release);
     }
 
@@ -159,7 +157,6 @@ public:
         start.x = params.x;
         start.y = params.y;
         start.touching = true;
-        start.pressure = 150;
         mDevice.pushInputPoint(start);
 
         // Brief movement duration for flick
@@ -173,7 +170,6 @@ public:
             point.x = params.x + (endX - params.x) * progress;
             point.y = params.y + (endY - params.y) * progress;
             point.touching = true;
-            point.pressure = 150;
             mDevice.pushInputPoint(point);
             std::this_thread::sleep_for(std::chrono::milliseconds(stepDelay));
         }
@@ -184,7 +180,6 @@ public:
         release.x = endX;
         release.y = endY;
         release.touching = false;
-        release.pressure = 0;
         mDevice.pushInputPoint(release);
     }
 
@@ -201,7 +196,6 @@ public:
         start.x = params.x;
         start.y = params.y;
         start.touching = true;
-        start.pressure = 150;
         mDevice.pushInputPoint(start);
 
         // Smooth movement
@@ -216,7 +210,6 @@ public:
             point.x = params.x + (endX - params.x) * progress;
             point.y = params.y + (endY - params.y) * progress;
             point.touching = true;
-            point.pressure = 150;
             mDevice.pushInputPoint(point);
             std::this_thread::sleep_for(std::chrono::milliseconds(stepMs));
         }
@@ -227,7 +220,6 @@ public:
         release.x = endX;
         release.y = endY;
         release.touching = false;
-        release.pressure = 0;
         mDevice.pushInputPoint(release);
     }
 
@@ -244,7 +236,6 @@ public:
         start.x = params.x;
         start.y = params.y;
         start.touching = true;
-        start.pressure = 150;
         mDevice.pushInputPoint(start);
 
         // Slow, controlled movement
@@ -259,7 +250,6 @@ public:
             point.x = params.x + (endX - params.x) * progress;
             point.y = params.y + (endY - params.y) * progress;
             point.touching = true;
-            point.pressure = 150;
             mDevice.pushInputPoint(point);
             std::this_thread::sleep_for(std::chrono::milliseconds(stepMs));
         }
@@ -273,7 +263,6 @@ public:
         release.x = endX;
         release.y = endY;
         release.touching = false;
-        release.pressure = 0;
         mDevice.pushInputPoint(release);
     }
 

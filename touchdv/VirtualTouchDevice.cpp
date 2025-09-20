@@ -435,8 +435,7 @@ void VirtualTouchDevice::Impl::pushInputPoint(const TouchPoint& p) {
     // Validate input point
     if (std::isnan(p.x) || std::isnan(p.y) ||
         p.x < -1000 || p.x > mCfg.screenWidth + 1000 ||
-        p.y < -1000 || p.y > mCfg.screenHeight + 1000 ||
-        p.pressure < 0 || p.pressure > 255) {
+        p.y < -1000 || p.y > mCfg.screenHeight + 1000) {
         // Invalid point, ignore it
         return;
     }
@@ -517,7 +516,6 @@ bool VirtualTouchDevice::Impl::findBracketing(steady_clock::time_point target, T
                     b.x = float(last.x + vx * future);
                     b.y = float(last.y + vy * future);
                     b.ts = target;
-                    b.pressure = last.pressure;
                     b.touching = last.touching;
 
                     // Validate extrapolated position is reasonable
@@ -618,10 +616,9 @@ TouchPoint VirtualTouchDevice::Impl::interpolate(const TouchPoint& a,const Touch
     // Clamp interpolation factor
     u = std::max(0.0, std::min(1.0, u));
 
-    // Interpolate position and pressure
+    // Interpolate position
     out.x = float((1.0 - u) * a.x + u * b.x);
     out.y = float((1.0 - u) * a.y + u * b.y);
-    out.pressure = int((1.0 - u) * a.pressure + u * b.pressure);
 
     // Intelligent touch state interpolation optimized for discrete sequences (TTTTTR pattern)
     if (a.touching == b.touching) {
@@ -711,7 +708,6 @@ void VirtualTouchDevice::Impl::senderLoop(){
                 // Force release due to timeout
                 TouchPoint autoReleasePoint = mProcessingBuffer.back();
                 autoReleasePoint.touching = false;
-                autoReleasePoint.pressure = 0;
                 autoReleasePoint.ts = currentTime;
 
                 if (mTouchDevice) {
@@ -732,7 +728,6 @@ void VirtualTouchDevice::Impl::senderLoop(){
         auto target = nextTick;
         TouchPoint a, b;
         TouchPoint out;
-        bool hasOutput = false;
 
         if(findBracketing(target, a, b)){
             out = interpolate(a, b, target);
@@ -742,15 +737,6 @@ void VirtualTouchDevice::Impl::senderLoop(){
             out.x = std::max(0.0f, std::min(out.x, float(mCfg.screenWidth-1)));
             out.y = std::max(0.0f, std::min(out.y, float(mCfg.screenHeight-1)));
 
-            if (mTouchDevice) {
-                mTouchDevice->emit(out);
-            }
-        }
-
-        if(hasOutput) {
-            // Clamp coordinates to screen bounds
-            out.x = std::max(0.0f, std::min(out.x, float(mCfg.screenWidth-1)));
-            out.y = std::max(0.0f, std::min(out.y, float(mCfg.screenHeight-1)));
             if (mTouchDevice) {
                 mTouchDevice->emit(out);
             }
@@ -767,7 +753,6 @@ void VirtualTouchDevice::Impl::senderLoop(){
         rel.ts = clk::now();
         rel.x = mProcessingBuffer.back().x;
         rel.y = mProcessingBuffer.back().y;
-        rel.pressure = 0;
         rel.touching = false;
         if (mTouchDevice) {
             mTouchDevice->emit(rel);

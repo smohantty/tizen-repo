@@ -12,7 +12,6 @@ struct TouchPoint {
     steady_clock::time_point ts;
     float x = 0.0f;
     float y = 0.0f;
-    int pressure = 150;   // 0..255, default to mid-range for IR touch systems
     bool touching = false;
 };
 
