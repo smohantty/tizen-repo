@@ -64,7 +64,7 @@ public:
     void saveToFile() {
         if (mRecordedEvents.empty()) return;
 
-        std::ofstream file(mFilePath);
+        std::ofstream file(mFilePath, std::ios::out | std::ios::trunc);
         if (!file.is_open()) {
             std::cerr << "Failed to open " << (mRecordRawInput ? "raw_input" : "upsampled_output") << " record file: " << mFilePath << std::endl;
             return;
@@ -552,8 +552,8 @@ private:
 
                                 emitTouchPoint(out);
                             }
-                        } 
-                    }   
+                        }
+                    }
                 }
 
             }
