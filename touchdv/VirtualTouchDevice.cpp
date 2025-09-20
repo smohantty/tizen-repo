@@ -343,10 +343,6 @@ public:
     void pushInputPoint(const TouchPoint& p);
     void setSmoothingType(SmoothingType type, const SmoothingConfig& config);
 
-    // Touch transition configuration
-    void setTouchTransitionThreshold(double threshold);
-    double getTouchTransitionThreshold() const;
-
     // Event callback interface
     void setEventCallback(std::function<void(const TouchPoint&)> callback);
 
@@ -421,14 +417,6 @@ void VirtualTouchDevice::setSmoothingType(SmoothingType type, const SmoothingCon
     mImpl->setSmoothingType(type, config);
 }
 
-void VirtualTouchDevice::setTouchTransitionThreshold(double threshold) {
-    mImpl->setTouchTransitionThreshold(threshold);
-}
-
-double VirtualTouchDevice::getTouchTransitionThreshold() const {
-    return mImpl->getTouchTransitionThreshold();
-}
-
 // Event callback interface
 void VirtualTouchDevice::setEventCallback(std::function<void(const TouchPoint&)> callback) {
     mImpl->setEventCallback(callback);
@@ -477,14 +465,6 @@ void VirtualTouchDevice::Impl::pushInputPoint(const TouchPoint& p) {
 void VirtualTouchDevice::Impl::setSmoothingType(SmoothingType type, const SmoothingConfig& config) {
     // No mutex needed - smoother is only used by processing thread
     mSmoother = createSmoothingStrategy(type, config);
-}
-
-void VirtualTouchDevice::Impl::setTouchTransitionThreshold(double threshold) {
-    mCfg.touchTransitionThreshold = std::max(0.0, std::min(0.5, threshold));
-}
-
-double VirtualTouchDevice::Impl::getTouchTransitionThreshold() const {
-    return mCfg.touchTransitionThreshold;
 }
 
 void VirtualTouchDevice::Impl::setEventCallback(std::function<void(const TouchPoint&)> callback) {

@@ -9,7 +9,6 @@ using namespace std::chrono;
 
 namespace vtd {
 
-// --------------------- Touch data types ---------------------
 struct TouchPoint {
     steady_clock::time_point ts;
     float x = 0.0f;
@@ -57,7 +56,6 @@ struct SmoothingConfig {
     double oneEuroDCutoff = 1.0;
 };
 
-// --------------------- VirtualTouchDevice ---------------------
 class VirtualTouchDevice {
 public:
     explicit VirtualTouchDevice(const Config& cfg);
@@ -67,10 +65,6 @@ public:
     void stop();
     void pushInputPoint(const TouchPoint& p);
     void setSmoothingType(SmoothingType type, const SmoothingConfig& config = SmoothingConfig{});
-
-    // Touch transition configuration
-    void setTouchTransitionThreshold(double threshold = 0.1);
-    double getTouchTransitionThreshold() const;
 
     // Event callback interface (works with all device types)
     void setEventCallback(std::function<void(const TouchPoint&)> callback);
