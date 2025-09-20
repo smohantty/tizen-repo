@@ -491,6 +491,7 @@ private:
 
     void handleReleaseTouchPoint(const TouchPoint& releasePoint)
     {
+            std::cout<<"handleReleaseTouchPoint \n";
         emitTouchPoint(releasePoint);
         mHasActiveTouch = false;
         mProcessingBuffer.clear();
@@ -524,6 +525,7 @@ private:
                     mHasActiveTouch = true;
                     emitTouchPoint(newInput);
                 } else {
+                    std::cout<<"XX handleReleaseTouchPoint \n";
                     handleReleaseTouchPoint(newInput);
                 }
             } else { //handle upsampling if required.
@@ -533,6 +535,7 @@ private:
                         TouchPoint releasePoint = mProcessingBuffer.back();
                         releasePoint.ts = currentTick;
                         releasePoint.touching = false;
+                                            std::cout<<"YY handleReleaseTouchPoint \n";
                         handleReleaseTouchPoint(releasePoint);
                     } else {
                         if (mProcessingBuffer.size() >= 2) {
