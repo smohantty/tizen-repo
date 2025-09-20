@@ -16,8 +16,8 @@ int main() {
     cfg.deviceType = DeviceType::Mock; // Use Mock device with recording
     cfg.enableRawInputRecording = true;
     cfg.enableUpsampledRecording = true;
-    cfg.rawInputRecordPath = "./test_raw_recording.json";
-    cfg.upsampledRecordPath = "./test_upsampled_recording.json";
+    cfg.rawInputRecordPath = "./dump/raw_recording.json";
+    cfg.upsampledRecordPath = "./dump/upsampled_recording.json";
     cfg.screenWidth = 1920;
     cfg.screenHeight = 1080;
     cfg.deviceName = "Recording Test Device";
