@@ -163,12 +163,20 @@ public:
 };
 
 // Factory function to create appropriate device
-std::unique_ptr<TouchDevice> createTouchDevice() {
+std::unique_ptr<TouchDevice> createTouchDevice(const Config& cfg) {
+    switch (cfg.deviceType) {
+        case DeviceType::Linux:
 #ifdef __linux__
-    return std::make_unique<LinuxTouchDevice>();
+            return std::make_unique<LinuxTouchDevice>();
 #else
-    return std::make_unique<MockTouchDevice>();
+            // Linux device requested but not available, fall back to mock
+            return std::make_unique<MockTouchDevice>();
 #endif
+
+        case DeviceType::Mock:
+        default:
+            return std::make_unique<MockTouchDevice>();
+    }
 }
 
 // --------------------- Smoothing Strategy Classes (Internal) ---------------------
@@ -388,7 +396,7 @@ VirtualTouchDevice::Impl::Impl(const Config& cfg)
     mSmoother = createSmoothingStrategy(cfg);
 
     // Create appropriate touch device
-    mTouchDevice = createTouchDevice();
+    mTouchDevice = createTouchDevice(cfg);
 }
 
 VirtualTouchDevice::Impl::~Impl() {

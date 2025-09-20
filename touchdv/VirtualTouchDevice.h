@@ -16,6 +16,12 @@ struct TouchPoint {
     bool touching = false;
 };
 
+// --------------------- Device Types ---------------------
+enum class DeviceType {
+    Linux,          // Linux uinput device (requires /dev/uinput access)
+    Mock            // Mock device for testing (no actual output)
+};
+
 // --------------------- Smoothing Strategies ---------------------
 enum class SmoothingType {
     None,           // No smoothing
@@ -34,6 +40,9 @@ struct Config {
     double maxExtrapolationMs = 50.0;  // Maximum extrapolation time in milliseconds
     double touchTimeoutMs = 200.0;     // Auto-release touch after this timeout (0 = disabled)
     std::string deviceName = "Virtual IR Touch";
+
+    // Device configuration
+    DeviceType deviceType = DeviceType::Mock; // Device type selection
 
     // Touch sequence handling - optimized for discrete touch patterns (TTTTTR)
     double touchTransitionThreshold = 0.1; // Threshold for touch state transitions (0.0-0.5)
