@@ -7,6 +7,8 @@
 
 using namespace std::chrono;
 
+namespace vtd {
+
 // --------------------- Touch data types ---------------------
 struct TouchPoint {
     steady_clock::time_point ts;
@@ -92,3 +94,5 @@ private:
     class Impl;
     std::unique_ptr<Impl> mImpl;
 };
+
+} // namespace vtd

@@ -25,6 +25,8 @@
 
 using namespace std::chrono;
 
+namespace vtd {
+
 // --------------------- Touch Device Implementations ---------------------
 
 #ifdef __linux__
@@ -759,3 +761,5 @@ void VirtualTouchDevice::Impl::senderLoop(){
         }
     }
 }
+
+} // namespace vtd

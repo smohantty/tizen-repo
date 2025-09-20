@@ -1,4 +1,5 @@
 #include "VirtualTouchDevice.h"
+using namespace vtd;
 #include <iostream>
 #include <chrono>
 #include <thread>

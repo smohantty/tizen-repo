@@ -9,6 +9,7 @@
 #include <cmath>
 #include <random>
 #include "VirtualTouchDevice.h"
+using namespace vtd;
 
 using namespace std::chrono;
 
