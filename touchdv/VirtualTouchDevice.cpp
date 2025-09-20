@@ -143,12 +143,8 @@ public:
 
 // Mock touch device for testing and non-Linux platforms
 class MockTouchDevice : public TouchDevice {
-public:
-    using EventCallback = std::function<void(const TouchPoint&)>;
-
 private:
     Config mConfig;
-    EventCallback mEventCallback; // Real-time callback for UI framework simulation
 
 public:
     bool setup(const Config& cfg) override {
@@ -161,14 +157,9 @@ public:
     }
 
     void emit(const TouchPoint& point) override {
-        // Real-time callback (minimal latency)
-        if (mEventCallback) {
-            mEventCallback(point);
-        }
+        // Mock device does nothing - events are handled by VirtualTouchDevice's callback system
+        (void)point; // Suppress unused parameter warning
     }
-
-    // Testing interface
-    void setEventCallback(EventCallback callback) { mEventCallback = callback; }
 };
 
 // Factory function to create appropriate device
