@@ -1,0 +1,1 @@
+option('enable_benchmark', type : 'boolean', value : false, description : 'Enable benchmark build')

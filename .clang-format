@@ -1,0 +1,34 @@
+BasedOnStyle: Google
+IndentWidth: 4
+TabWidth: 4
+UseTab: Never
+
+# Brace placement
+BreakBeforeBraces: Attach    # Google style uses K&R style braces
+AllowShortFunctionsOnASingleLine: InlineOnly
+AllowShortIfStatementsOnASingleLine: false
+
+# Column limit
+ColumnLimit: 120
+
+# Pointer/reference alignment
+PointerAlignment: Left
+
+# Indentation for cases
+IndentCaseLabels: true
+
+# Constructor / initializer lists
+ConstructorInitializerIndentWidth: 4
+
+# Spaces
+SpaceBeforeParens: ControlStatements
+SpacesInParentheses: false
+SpacesInSquareBrackets: false
+SpaceAfterCStyleCast: true
+
+# Alignments
+AlignConsecutiveAssignments: false
+AlignConsecutiveDeclarations: false
+
+# Naming conventions
+# clang-format does not enforce variable naming, but will respect your mPrefix camelCase
