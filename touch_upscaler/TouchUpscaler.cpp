@@ -159,21 +159,8 @@ Config Config::getDefault() {
 }
 
 struct TouchUpscaler::Impl {
+   public:
     enum class State { Idle, Active, MaybeUp };
-
-    Config mCfg;
-
-    std::mutex mMutex;
-    std::atomic<bool> mRunning{false};
-    std::thread mWorkerThread;
-    std::unique_ptr<InputBackend> mBackend;
-
-    State mState{State::Idle};
-    std::vector<TouchPoint> mHistory;
-
-    std::mutex mInputMutex;
-    TouchPoint mLatestInput;
-    bool mHasNewInput = false;
 
     Impl(const Config& cfg) : mCfg(cfg) {
         mHistory.reserve(10);
@@ -239,27 +226,42 @@ struct TouchUpscaler::Impl {
                 }
             }
 
-            // 2. Update history if input is valid
-            if (hasInput && input.valid) {
-                if (mHistory.size() >= mCfg.historySize) {
-                    mHistory.erase(mHistory.begin());
+            if (hasInput) {  // process new input
+                if (input.valid) {
+                    if (mHistory.size() >= mCfg.historySize) {
+                        mHistory.erase(mHistory.begin());
+                    } else {
+                        mHistory.push_back(input);
+                    }
                 } else {
-                    mHistory.push_back(input);
+                    // mState = State::MaybeUp; we can't just directly update the state?
                 }
             }
 
-            // 3. Generate upscale output
-            TouchPoint out;
-            if (updateState(out)) {
-                // send it to the backend
-            }
+            // 2. Update history if input is valid
 
             auto nextTick = currentTick + std::chrono::duration_cast<steady_clock::duration>(duration<double>(period));
             std::this_thread::sleep_until(nextTick);
         }
     }
 
-    bool updateState(TouchPoint& out) { return false; }
+   private:
+    Config mCfg;
+
+    std::mutex mMutex;
+    std::atomic<bool> mRunning{false};
+    std::thread mWorkerThread;
+    std::unique_ptr<InputBackend> mBackend;
+
+    std::mutex mInputMutex;
+    TouchPoint mLatestInput;
+    bool mHasNewInput = false;
+
+    // state management
+    State mState{State::Idle};
+    std::vector<TouchPoint> mHistory;
+    TouchPoint mLastOutput;
+    steady_clock::time_point mMaybeUpStart;
 };
 
 TouchUpscaler::TouchUpscaler(const Config& cfg) : mImpl(std::make_unique<Impl>(cfg)) {
