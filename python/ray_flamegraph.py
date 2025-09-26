@@ -3,18 +3,17 @@ import shutil
 import subprocess
 import sys
 import shlex
-import os
 import webbrowser
 
-# Remote paths (on Tizen device)
+# Remote (Tizen device) paths
 PERF_DATA = "/tmp/perf.data"
 PERF_TXT  = "/tmp/perf.script"
 
-# Local output file
+# Local output
 SVG_FILE  = "/tmp/flamegraph.svg"
 
 def check_prerequisites():
-    """Ensure sdb and inferno tools exist on the HOST."""
+    """Check host requirements: sdb and inferno utilities."""
     missing = []
     if not shutil.which("sdb"):
         missing.append((
@@ -47,23 +46,32 @@ def main():
     print(" 3) System-wide (-a) recording on device")
     mode = input("Choice [1/2/3]: ").strip()
 
-    # Common perf options: 99 Hz sampling, DWARF call graph
+    # perf options: DWARF call graph for full stack traces
     perf_opts = "-F 99 --call-graph dwarf -g -o {data}".format(data=PERF_DATA)
 
     if mode == "1":
         app = input("Enter app launch command (on device): ").strip()
         record_cmd = f"perf record {perf_opts} -- {app}"
+
     elif mode == "2":
-        name = input("Enter process name substring: ").strip()
-        ps_out = run_sdb(f"ps -ef | grep {shlex.quote(name)} | grep -v grep")
+        # Ask for a unique substring of the executable name
+        name = input("Enter process name substring (e.g. rayvision): ").strip()
+        # Use [r] trick to avoid matching the grep itself and anchor to end-of-line
+        ps_cmd = (
+            f"ps -eo pid,comm,args | grep '[{name[0]}]{shlex.quote(name[1:])}$'"
+        )
+        ps_out = run_sdb(ps_cmd)
         if not ps_out.strip():
             print("No matching process found on device.")
             sys.exit(1)
-        pid = ps_out.split()[1]
+        # Take the first column (PID) of the first matching line
+        pid = ps_out.split()[0]
         print(f"Found PID {pid}")
         record_cmd = f"perf record {perf_opts} -p {pid}"
+
     elif mode == "3":
         record_cmd = f"perf record {perf_opts} -a"
+
     else:
         print("Invalid choice.")
         sys.exit(1)
@@ -73,7 +81,7 @@ def main():
     rec_proc = subprocess.Popen(["sdb", "shell", record_cmd], stdin=subprocess.PIPE)
 
     input()  # Wait until user presses Enter
-    rec_proc.terminate()       # send SIGTERM to perf
+    rec_proc.terminate()
     rec_proc.wait()
 
     print("Converting perf.data -> perf.script on device…")
@@ -86,11 +94,13 @@ def main():
     with open(SVG_FILE, "w") as outsvg:
         collapse = subprocess.Popen(
             ["inferno-collapse-perf", PERF_TXT],
-            stdout=subprocess.PIPE)
+            stdout=subprocess.PIPE
+        )
         subprocess.check_call(
             ["inferno-flamegraph"],
             stdin=collapse.stdout,
-            stdout=outsvg)
+            stdout=outsvg
+        )
 
     print(f"Flamegraph generated: {SVG_FILE}")
     webbrowser.open(f"file://{SVG_FILE}")
