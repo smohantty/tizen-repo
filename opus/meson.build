@@ -5,6 +5,8 @@ project('opus-audio-codec', 'cpp',
 
 # Dependencies
 opus_dep = dependency('opus', required : true)
+sndfile_dep = dependency('sndfile', required : true)
+ogg_dep = dependency('ogg', required : true)
 
 # Source files
 opus_sources = [
@@ -51,3 +53,16 @@ opus_dep = declare_dependency(
   link_with : opus_lib,
   include_directories : include_directories('.'),
   dependencies : opus_dep)
+
+# Generate test WAV file utility
+generate_wav = executable('generate_test_wav',
+  'generateTestWav.cpp',
+  dependencies : sndfile_dep,
+  install : false)
+
+# Opus OGG compression test
+opus_ogg_test = executable('opus_ogg_test',
+  'opusOggTest.cpp',
+  dependencies : [opus_dep, sndfile_dep, ogg_dep],
+  include_directories : include_directories('.'),
+  install : false)
