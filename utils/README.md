@@ -386,3 +386,178 @@ window.addFrame(frame);           // OK
 std::array<int, 3> wrongFrame = {1, 2, 3};
 window.addFrame(wrongFrame);      // Compile-time error: static_assert failure
 ```
+
+## WaveHeader
+
+A simple and efficient WAV file header structure for reading and writing standard PCM WAV format headers. The structure is exactly 44 bytes and can be directly read from or written to buffers.
+
+### Features
+
+- **Direct Buffer Access**: Read/write directly from/to char* buffers
+- **Packed Structure**: No padding, exactly 44 bytes as per WAV specification
+- **PCM Format**: Supports standard PCM audio format
+- **File I/O**: Built-in file reading and writing capabilities
+- **Validation**: Automatic header validation
+- **Flexible Audio Formats**: Supports various sample rates, bit depths, and channel configurations
+
+### Usage
+
+```cpp
+#include "WaveHeader.h"
+#include <iostream>
+
+using namespace utils;
+
+int main() {
+    // Create a new WAV header for 16kHz, mono, 16-bit audio
+    WaveHeader header(1, 16000, 16, 16000); // 1 second of audio
+
+    // Write to buffer
+    char buffer[44];
+    header.writeToBuffer(buffer);
+
+    // Read from buffer
+    WaveHeader header2;
+    if (header2.readFromBuffer(buffer)) {
+        std::cout << "Successfully read header\n";
+        std::cout << header2.getDescription() << "\n";
+    }
+
+    // Write to file
+    header.writeToFile("output.wav");
+
+    // Read from file
+    WaveHeader header3;
+    if (header3.readFromFile("input.wav")) {
+        std::cout << "Sample Rate: " << header3.mSampleRate << " Hz\n";
+        std::cout << "Channels: " << header3.mNumChannels << "\n";
+        std::cout << "Duration: " << header3.getDuration() << " seconds\n";
+    }
+
+    return 0;
+}
+```
+
+### Structure Members
+
+The WaveHeader struct contains the following public members that can be accessed directly:
+
+```cpp
+// RIFF Header
+char mRiffId[4];        // "RIFF"
+uint32_t mFileSize;     // File size - 8
+char mWaveId[4];        // "WAVE"
+
+// Format Chunk
+char mFmtId[4];         // "fmt "
+uint32_t mFmtSize;      // Size of format chunk (16 for PCM)
+uint16_t mAudioFormat;  // Audio format (1 = PCM)
+uint16_t mNumChannels;  // Number of channels (1=mono, 2=stereo)
+uint32_t mSampleRate;   // Sample rate in Hz
+uint32_t mByteRate;     // Byte rate (computed)
+uint16_t mBlockAlign;   // Block align (computed)
+uint16_t mBitsPerSample;// Bits per sample (8, 16, 24, 32)
+
+// Data Chunk
+char mDataId[4];        // "data"
+uint32_t mDataSize;     // Size of audio data in bytes
+```
+
+### API Reference
+
+#### Constructor
+```cpp
+WaveHeader(uint16_t numChannels = 1,
+           uint32_t sampleRate = 16000,
+           uint16_t bitsPerSample = 16,
+           uint32_t numSamples = 0);
+```
+Creates a WAV header with specified audio parameters.
+
+#### Buffer Operations
+```cpp
+bool readFromBuffer(const char* buffer);  // Read header from 44-byte buffer
+void writeToBuffer(char* buffer) const;   // Write header to 44-byte buffer
+```
+
+#### File Operations
+```cpp
+bool readFromFile(const std::string& filename);  // Read from WAV file
+bool writeToFile(const std::string& filename) const; // Write to new WAV file
+```
+
+#### Validation
+```cpp
+bool isValid() const;  // Validate header format and parameters
+```
+
+#### Information
+```cpp
+uint32_t getNumSamples() const;     // Get number of samples per channel
+double getDuration() const;          // Get duration in seconds
+std::string getDescription() const;  // Get human-readable description
+```
+
+#### Modification
+```cpp
+void setNumSamples(uint32_t numSamples);  // Set samples and update data size
+void updateComputedFields();               // Recalculate byte rate, block align, etc.
+```
+
+### Supported Formats
+
+- **Sample Rates**: Any rate from 1 Hz to 192,000 Hz (typically 8000, 16000, 44100, 48000)
+- **Channels**: 1-8 channels (typically 1=mono, 2=stereo)
+- **Bit Depth**: 8, 16, 24, or 32 bits per sample
+- **Format**: PCM (uncompressed)
+
+### Common Use Cases
+
+#### Reading an existing WAV file
+```cpp
+WaveHeader header;
+if (header.readFromFile("audio.wav")) {
+    std::cout << "Format: " << header.mSampleRate << " Hz, "
+              << header.mNumChannels << " channels, "
+              << header.mBitsPerSample << " bits\n";
+}
+```
+
+#### Creating a new WAV file
+```cpp
+// Create header for stereo 48kHz 24-bit audio, 5 seconds
+WaveHeader header(2, 48000, 24, 240000);
+header.writeToFile("output.wav");
+
+// Now append audio data to the file...
+```
+
+#### Working with audio buffers
+```cpp
+// Read WAV data into memory
+std::ifstream file("audio.wav", std::ios::binary);
+char headerBuffer[44];
+file.read(headerBuffer, 44);
+
+WaveHeader header;
+header.readFromBuffer(headerBuffer);
+
+// Read audio data
+std::vector<char> audioData(header.mDataSize);
+file.read(audioData.data(), header.mDataSize);
+```
+
+### Testing
+
+Run the test executable:
+
+```bash
+./waveHeaderTest
+```
+
+The test demonstrates:
+- Creating WAV headers with different formats
+- Buffer read/write operations
+- File I/O operations
+- Header validation
+- Direct struct member access

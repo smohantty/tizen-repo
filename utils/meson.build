@@ -12,6 +12,7 @@ inc_dirs = include_directories('inc')
 # utils library
 utils_lib = static_library('utils',
   'src/Base64.cpp',
+  'src/WaveHeader.cpp',
   include_directories : inc_dirs,
   install : false
 )
@@ -63,5 +64,15 @@ executable(
     'src/serdeTest.cpp'
   )],
   include_directories : inc_dirs,
+  install : false
+)
+
+executable(
+  'waveHeaderTest',
+  [files(
+    'src/waveHeaderTest.cpp'
+  )],
+  include_directories : inc_dirs,
+  link_with : utils_lib,
   install : false
 )
