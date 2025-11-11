@@ -4,6 +4,7 @@
 #include <iostream>
 #include <atomic>
 #include <mutex>
+#include <future>
 
 namespace utils {
 
@@ -167,6 +168,43 @@ public:
         return mSynthesizing.load();
     }
 
+    SynthesisResult synthesizeSync(const std::string& text,
+                                   const std::map<std::string, std::string>& additionalParams) {
+        SynthesisResult result;
+        result.error = TtsError::None;
+
+        // Use the existing synthesize method with a callback that accumulates data
+        auto callback = [&result](const std::vector<uint8_t>& audioData, TtsError error) {
+            if (error != TtsError::None) {
+                result.error = error;
+            } else if (!audioData.empty()) {
+                // Accumulate audio chunks
+                result.audioData.insert(result.audioData.end(),
+                                      audioData.begin(),
+                                      audioData.end());
+            }
+            // Empty audioData signals completion, nothing to do
+        };
+
+        // Call the streaming version and collect all data
+        TtsError synthesisError = synthesize(text, callback, additionalParams);
+
+        // Update error if synthesis returned an error
+        if (synthesisError != TtsError::None) {
+            result.error = synthesisError;
+        }
+
+        return result;
+    }
+
+    std::future<SynthesisResult> synthesizeAsync(const std::string& text,
+                                                 const std::map<std::string, std::string>& additionalParams) {
+        // Launch synthesis in a separate thread
+        return std::async(std::launch::async, [this, text, additionalParams]() {
+            return synthesizeSync(text, additionalParams);
+        });
+    }
+
 private:
     std::string buildRequestBody(const std::string& text,
                                  const std::map<std::string, std::string>& additionalParams) {
@@ -252,6 +290,16 @@ void TtsEngine::cancel() {
 
 bool TtsEngine::isSynthesizing() const {
     return mImpl->isSynthesizing();
+}
+
+SynthesisResult TtsEngine::synthesizeSync(const std::string& text,
+                                          const std::map<std::string, std::string>& additionalParams) {
+    return mImpl->synthesizeSync(text, additionalParams);
+}
+
+std::future<SynthesisResult> TtsEngine::synthesizeAsync(const std::string& text,
+                                                        const std::map<std::string, std::string>& additionalParams) {
+    return mImpl->synthesizeAsync(text, additionalParams);
 }
 
 } // namespace utils
