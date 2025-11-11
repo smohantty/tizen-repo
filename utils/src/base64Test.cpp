@@ -183,10 +183,132 @@ void testRandomData() {
     std::cout << "✓ Random data test passed" << std::endl << std::endl;
 }
 
+void testDecodeBytesBasic() {
+    std::cout << "Testing decodeBytes() basic functionality..." << std::endl;
+
+    // Test with a known Base64 string
+    std::string base64 = "SGVsbG8gV29ybGQ="; // "Hello World" in Base64
+    std::vector<uint8_t> decoded = Base64::decodeBytes(base64);
+
+    // Expected bytes for "Hello World"
+    std::vector<uint8_t> expected = {72, 101, 108, 108, 111, 32, 87, 111, 114, 108, 100};
+
+    assert(decoded.size() == expected.size());
+    for (size_t i = 0; i < expected.size(); ++i) {
+        assert(decoded[i] == expected[i]);
+    }
+
+    // Convert to string to verify
+    std::string text(decoded.begin(), decoded.end());
+    std::cout << "✓ Decoded text: \"" << text << "\"" << std::endl;
+
+    std::cout << "✓ decodeBytes() basic test passed" << std::endl << std::endl;
+}
+
+void testDecodeBytesEmpty() {
+    std::cout << "Testing decodeBytes() with empty data..." << std::endl;
+
+    std::vector<uint8_t> decoded = Base64::decodeBytes("");
+    assert(decoded.empty());
+    std::cout << "✓ Empty string decodes to empty byte vector" << std::endl;
+
+    std::cout << "✓ decodeBytes() empty test passed" << std::endl << std::endl;
+}
+
+void testDecodeBytesOddLength() {
+    std::cout << "Testing decodeBytes() with odd number of bytes..." << std::endl;
+
+    // Encode 3 bytes (odd number, would fail with short version)
+    std::vector<short> shortData = {12345}; // 2 bytes
+    std::string encoded = Base64::encode(shortData);
+
+    // Manually create a base64 string with 3 bytes
+    // "ABC" = 0x41 0x42 0x43 in ASCII -> "QUJD" in Base64
+    std::string oddBase64 = "QUJD";
+    std::vector<uint8_t> decoded = Base64::decodeBytes(oddBase64);
+
+    assert(decoded.size() == 3);
+    assert(decoded[0] == 0x41); // 'A'
+    assert(decoded[1] == 0x42); // 'B'
+    assert(decoded[2] == 0x43); // 'C'
+
+    std::cout << "✓ Successfully decoded 3 bytes (odd number)" << std::endl;
+    std::cout << "✓ Bytes: 0x" << std::hex << (int)decoded[0] << " 0x" << (int)decoded[1] << " 0x" << (int)decoded[2] << std::dec << std::endl;
+
+    // This would fail with decode() for shorts
+    try {
+        std::vector<short> shortDecoded = Base64::decode(oddBase64);
+        std::cout << "✗ Short decode should have failed for odd byte count!" << std::endl;
+        assert(false);
+    } catch (const std::runtime_error& e) {
+        std::cout << "✓ Short decode correctly throws exception for odd bytes: " << e.what() << std::endl;
+    }
+
+    std::cout << "✓ decodeBytes() odd length test passed" << std::endl << std::endl;
+}
+
+void testDecodeBytesRoundTrip() {
+    std::cout << "Testing decodeBytes() round-trip with short data..." << std::endl;
+
+    // Encode shorts to base64
+    std::vector<short> originalShorts = {1000, -2000, 3000, -4000};
+    std::string encoded = Base64::encode(originalShorts);
+
+    // Decode to bytes
+    std::vector<uint8_t> bytes = Base64::decodeBytes(encoded);
+
+    // Should have 8 bytes (4 shorts * 2 bytes each)
+    assert(bytes.size() == 8);
+    std::cout << "✓ Decoded " << bytes.size() << " bytes from 4 shorts" << std::endl;
+
+    // Decode to shorts
+    std::vector<short> decodedShorts = Base64::decode(encoded);
+    assert(decodedShorts.size() == originalShorts.size());
+
+    // Verify bytes match the short representation
+    const uint8_t* shortBytes = reinterpret_cast<const uint8_t*>(decodedShorts.data());
+    for (size_t i = 0; i < bytes.size(); ++i) {
+        assert(bytes[i] == shortBytes[i]);
+    }
+
+    std::cout << "✓ Byte representation matches short data" << std::endl;
+    std::cout << "✓ decodeBytes() round-trip test passed" << std::endl << std::endl;
+}
+
+void testDecodeBytesVsShorts() {
+    std::cout << "Testing decodeBytes() vs decode() consistency..." << std::endl;
+
+    std::vector<short> shortData = {100, 200, 300, 400, 500};
+    std::string encoded = Base64::encode(shortData);
+
+    std::vector<uint8_t> bytes = Base64::decodeBytes(encoded);
+    std::vector<short> shorts = Base64::decode(encoded);
+
+    // Bytes should be exactly 2x the number of shorts
+    assert(bytes.size() == shorts.size() * 2);
+    std::cout << "✓ Byte count (" << bytes.size() << ") = 2 × short count (" << shorts.size() << ")" << std::endl;
+
+    // Verify byte-level representation matches
+    const uint8_t* shortBytes = reinterpret_cast<const uint8_t*>(shorts.data());
+    bool bytesMatch = true;
+    for (size_t i = 0; i < bytes.size(); ++i) {
+        if (bytes[i] != shortBytes[i]) {
+            bytesMatch = false;
+            std::cout << "✗ Byte mismatch at index " << i << std::endl;
+            break;
+        }
+    }
+
+    assert(bytesMatch);
+    std::cout << "✓ All bytes match between decodeBytes() and decode()" << std::endl;
+    std::cout << "✓ Consistency test passed" << std::endl << std::endl;
+}
+
 int main() {
     std::cout << "Starting Base64 tests..." << std::endl << std::endl;
 
     try {
+        // Original short-based tests
         testEmptyData();
         testSingleShort();
         testMultipleShorts();
@@ -194,6 +316,17 @@ int main() {
         testRawArrayInterface();
         testEdgeCases();
         testRandomData();
+
+        std::cout << "═══════════════════════════════════════════════" << std::endl;
+        std::cout << "Starting decodeBytes() tests..." << std::endl;
+        std::cout << "═══════════════════════════════════════════════" << std::endl << std::endl;
+
+        // New byte-based tests
+        testDecodeBytesBasic();
+        testDecodeBytesEmpty();
+        testDecodeBytesOddLength();
+        testDecodeBytesRoundTrip();
+        testDecodeBytesVsShorts();
 
         std::cout << "🎉 All Base64 tests passed successfully!" << std::endl;
         return 0;

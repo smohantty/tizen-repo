@@ -53,7 +53,7 @@ std::string Base64::encode(const short* data, std::size_t size) {
     return result;
 }
 
-std::vector<short> Base64::decode(const std::string& encoded) {
+std::vector<uint8_t> Base64::decodeBytes(const std::string& encoded) {
     if (encoded.empty()) {
         return {};
     }
@@ -62,7 +62,7 @@ std::vector<short> Base64::decode(const std::string& encoded) {
         throw std::runtime_error("Invalid Base64 string length");
     }
 
-    std::vector<unsigned char> bytes;
+    std::vector<uint8_t> bytes;
     bytes.reserve((encoded.length() / 4) * 3);
 
     for (std::size_t i = 0; i < encoded.length(); i += 4) {
@@ -87,6 +87,13 @@ std::vector<short> Base64::decode(const std::string& encoded) {
             bytes.push_back((triple >> ((2 - j) * 8)) & 0xFF);
         }
     }
+
+    return bytes;
+}
+
+std::vector<short> Base64::decode(const std::string& encoded) {
+    // Reuse the byte decoding logic
+    std::vector<uint8_t> bytes = decodeBytes(encoded);
 
     if (bytes.size() % sizeof(short) != 0) {
         throw std::runtime_error("Decoded byte count not aligned to short");

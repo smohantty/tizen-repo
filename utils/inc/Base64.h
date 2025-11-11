@@ -36,6 +36,14 @@ public:
     static std::vector<short> decode(const std::string& encoded);
 
     /**
+     * @brief Decode Base64 string to vector of raw bytes
+     * @param encoded Base64 encoded string
+     * @return Vector of decoded uint8_t values
+     * @throws std::runtime_error if decoding fails
+     */
+    static std::vector<uint8_t> decodeBytes(const std::string& encoded);
+
+    /**
      * @brief Encode raw short array to Base64 string
      * @param data Pointer to short array
      * @param size Number of elements in the array
